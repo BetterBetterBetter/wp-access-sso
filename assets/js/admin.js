@@ -17,6 +17,12 @@
             generateSecret();
         });
         
+        // Toggle JWT secret visibility
+        $('#toggle-secret-visibility').on('click', function(e) {
+            e.preventDefault();
+            toggleSecretVisibility();
+        });
+        
         // Session management tools
         $('#cleanup-sessions').on('click', function(e) {
             e.preventDefault();
@@ -124,6 +130,19 @@
         }, 2000);
         
         showNotice('New JWT secret generated. Make sure to save your settings!', 'info');
+    }
+    
+    function toggleSecretVisibility() {
+        var $input = $('#access_sso_jwt_secret');
+        var $button = $('#toggle-secret-visibility');
+        
+        if ($input.attr('type') === 'password') {
+            $input.attr('type', 'text');
+            $button.text('Hide');
+        } else {
+            $input.attr('type', 'password');
+            $button.text('Show');
+        }
     }
     
     function generateRandomString(length) {
@@ -478,6 +497,7 @@
     window.accessSSOAdmin = {
         testConnection: testConnection,
         generateSecret: generateSecret,
+        toggleSecretVisibility: toggleSecretVisibility,
         cleanupSessions: cleanupSessions,
         viewActiveSessions: viewActiveSessions,
         viewLogs: viewLogs,

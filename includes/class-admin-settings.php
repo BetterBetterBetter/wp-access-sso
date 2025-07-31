@@ -65,6 +65,14 @@ class AccessSSO_Admin_Settings {
             'access_sso_connection'
         );
         
+        add_settings_field(
+            'access_sso_redirect_url',
+            __('Post-Login Redirect URL', 'access-platform-sso'),
+            array($this, 'redirect_url_callback'),
+            $this->page_slug,
+            'access_sso_connection'
+        );
+        
         // User management settings
         add_settings_field(
             'access_sso_auto_provision',
@@ -117,7 +125,7 @@ class AccessSSO_Admin_Settings {
         
         // Register all settings
         $settings = array(
-            'platform_url', 'site_id', 'jwt_secret', 'auto_provision',
+            'platform_url', 'site_id', 'jwt_secret', 'redirect_url', 'auto_provision',
             'default_role', 'role_mapping', 'global_logout', 'admin_bypass',
             'enable_logging', 'show_login_message', 'notify_suspicious_activity'
         );
@@ -194,6 +202,21 @@ class AccessSSO_Admin_Settings {
     // Section callbacks
     public function connection_section_callback() {
         echo '<p>' . __('Configure the connection to your Access Platform.', 'access-platform-sso') . '</p>';
+        
+        // Show current SSO URL for testing
+        $platform_url = AccessPlatformSSO::get_instance()->get_option('platform_url', '');
+        $site_id = AccessPlatformSSO::get_instance()->get_option('site_id', '');
+        
+        if (!empty($platform_url) && !empty($site_id)) {
+            $callback_url = home_url('/?access_sso_callback=1&nonce=' . wp_create_nonce('access_sso_callback'));
+            $sso_url = $platform_url . '/login?site_id=' . urlencode($site_id) . '&redirect_to=' . urlencode($callback_url);
+            
+            echo '<div class="notice notice-info inline" style="margin: 10px 0; padding: 10px;">';
+            echo '<p><strong>' . __('Test SSO URL:', 'access-platform-sso') . '</strong></p>';
+            echo '<p><a href="' . esc_url($sso_url) . '" target="_blank" class="button">' . __('Test SSO Login', 'access-platform-sso') . '</a></p>';
+            echo '<p class="description">' . __('Use this link to test your SSO configuration.', 'access-platform-sso') . '</p>';
+            echo '</div>';
+        }
     }
     
     public function user_management_section_callback() {
@@ -219,11 +242,27 @@ class AccessSSO_Admin_Settings {
     
     public function jwt_secret_callback() {
         $value = AccessPlatformSSO::get_instance()->get_option('jwt_secret', '');
-        $masked_value = !empty($value) ? str_repeat('*', 40) : '';
         
-        echo '<input type="password" name="access_sso_jwt_secret" value="' . esc_attr($value) . '" class="regular-text" placeholder="' . esc_attr($masked_value) . '">';
+        echo '<div class="jwt-secret-field-wrapper">';
+        echo '<input type="password" name="access_sso_jwt_secret" id="access_sso_jwt_secret" value="' . esc_attr($value) . '" class="regular-text">';
+        echo '<button type="button" class="button" id="toggle-secret-visibility">' . __('Show', 'access-platform-sso') . '</button>';
         echo '<button type="button" class="button" id="generate-secret">' . __('Generate New Secret', 'access-platform-sso') . '</button>';
+        echo '</div>';
         echo '<p class="description">' . __('Secret key for JWT token validation. Must match the secret in your Access Platform.', 'access-platform-sso') . '</p>';
+    }
+    
+    public function redirect_url_callback() {
+        $value = AccessPlatformSSO::get_instance()->get_option('redirect_url', '');
+        $home_url = home_url();
+        
+        echo '<input type="url" name="access_sso_redirect_url" value="' . esc_attr($value) . '" class="regular-text" placeholder="' . esc_attr($home_url) . '">';
+        echo '<p class="description">' . __('URL to redirect users to after successful SSO login. Leave empty to redirect to homepage.', 'access-platform-sso') . '</p>';
+        echo '<p class="description"><strong>' . __('Examples:', 'access-platform-sso') . '</strong></p>';
+        echo '<ul class="description">';
+        echo '<li><code>' . esc_html($home_url) . '</code> - Homepage</li>';
+        echo '<li><code>' . esc_html($home_url . '/dashboard') . '</code> - Custom dashboard</li>';
+        echo '<li><code>' . esc_html($home_url . '/my-account') . '</code> - User account page</li>';
+        echo '</ul>';
     }
     
     public function auto_provision_callback() {

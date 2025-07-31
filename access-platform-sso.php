@@ -22,6 +22,7 @@ define('ACCESS_SSO_PLUGIN_URL', plugin_dir_url(__FILE__));
 class AccessPlatformSSO {
     
     private static $instance = null;
+    private $admin_settings = null;
     
     public static function get_instance() {
         if (null === self::$instance) {
@@ -160,8 +161,15 @@ class AccessPlatformSSO {
         $session_manager = new AccessSSO_Session_Manager();
         $session_manager->create_sso_session($wp_user->ID, $user_data);
         
-        // Redirect to intended page or dashboard
-        $redirect_url = isset($_GET['redirect_to']) ? esc_url_raw($_GET['redirect_to']) : admin_url();
+        // Redirect to configured URL, fallback to homepage
+        $default_redirect = $this->get_option('redirect_url', home_url());
+        $redirect_url = isset($_GET['redirect_to']) ? esc_url_raw($_GET['redirect_to']) : $default_redirect;
+        
+        // Ensure we have a valid URL
+        if (empty($redirect_url)) {
+            $redirect_url = home_url();
+        }
+        
         wp_redirect($redirect_url);
         exit;
     }
@@ -175,11 +183,15 @@ class AccessPlatformSSO {
         }
         
         $callback_url = home_url('/?access_sso_callback=1&nonce=' . wp_create_nonce('access_sso_callback'));
-        $redirect_to = isset($_GET['redirect_to']) ? urlencode($_GET['redirect_to']) : '';
+        $redirect_to_param = isset($_GET['redirect_to']) ? $_GET['redirect_to'] : '';
+        
+        // Add redirect_to to callback URL if specified
+        if (!empty($redirect_to_param)) {
+            $callback_url .= '&redirect_to=' . urlencode($redirect_to_param);
+        }
         
         $sso_url = $platform_url . '/login?site_id=' . urlencode($site_id) . 
-                   '&callback=' . urlencode($callback_url) . 
-                   '&redirect_to=' . $redirect_to;
+                   '&redirect_to=' . urlencode($callback_url);
         
         echo '<div class="access-sso-login-wrapper">';
         echo '<a href="' . esc_url($sso_url) . '" class="button button-large access-sso-login-button">';
@@ -236,32 +248,15 @@ class AccessPlatformSSO {
     }
     
     public function admin_init() {
-        $admin_settings = new AccessSSO_Admin_Settings();
-        $admin_settings->init();
+        $this->admin_settings = new AccessSSO_Admin_Settings();
+        $this->admin_settings->init();
     }
     
     public function admin_page() {
-        // Handle form submission
-        if (isset($_POST['submit']) && check_admin_referer('access_sso_settings')) {
-            $this->update_option('platform_url', sanitize_url($_POST['platform_url']));
-            $this->update_option('site_id', sanitize_text_field($_POST['site_id']));
-            $this->update_option('jwt_secret', sanitize_text_field($_POST['jwt_secret']));
-            $this->update_option('auto_provision', isset($_POST['auto_provision']) ? '1' : '0');
-            $this->update_option('default_role', sanitize_text_field($_POST['default_role']));
-            $this->update_option('global_logout', isset($_POST['global_logout']) ? '1' : '0');
-            
-            echo '<div class="notice notice-success"><p>' . __('Settings saved!', 'access-platform-sso') . '</p></div>';
-        }
-        
-        // Get current values with defaults
-        $platform_url = $this->get_option('platform_url', '');
+        // Generate defaults if empty
         $site_id = $this->get_option('site_id', '');
         $jwt_secret = $this->get_option('jwt_secret', '');
-        $auto_provision = $this->get_option('auto_provision', '1');
-        $default_role = $this->get_option('default_role', 'subscriber');
-        $global_logout = $this->get_option('global_logout', '1');
         
-        // Generate defaults if empty
         if (empty($site_id)) {
             $site_id = wp_generate_uuid4();
             $this->update_option('site_id', $site_id);
@@ -271,194 +266,15 @@ class AccessPlatformSSO {
             $this->update_option('jwt_secret', $jwt_secret);
         }
         
-        ?>
-        <div class="wrap">
-            <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
-            
-            <div style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccd0d4; border-left: 4px solid #00a0d2;">
-                <h2 style="margin-top: 0;"><?php _e('Quick Setup Guide', 'access-platform-sso'); ?></h2>
-                <ol>
-                    <li><strong><?php _e('Platform URL:', 'access-platform-sso'); ?></strong> <?php _e('Enter your Access Platform URL (e.g., https://your-platform.com)', 'access-platform-sso'); ?></li>
-                    <li><strong><?php _e('JWT Secret:', 'access-platform-sso'); ?></strong> <?php _e('Copy the generated secret to your Access Platform environment as SSO_JWT_SECRET', 'access-platform-sso'); ?></li>
-                    <li><strong><?php _e('Test Connection:', 'access-platform-sso'); ?></strong> <?php _e('Click test to verify everything works', 'access-platform-sso'); ?></li>
-                    <li><strong><?php _e('Save Settings', 'access-platform-sso'); ?></strong></li>
-                </ol>
-            </div>
-            
-            <!-- Connection Status -->
-            <div style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccd0d4;">
-                <h3><?php _e('Connection Status', 'access-platform-sso'); ?></h3>
-                <div style="display: flex; align-items: center; margin-bottom: 15px;">
-                    <span id="status-indicator" style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #ddd; margin-right: 10px;"></span>
-                    <span id="status-text"><?php _e('Not configured', 'access-platform-sso'); ?></span>
-                </div>
-                <button type="button" class="button" onclick="testConnection()" id="test-connection-btn">
-                    <?php _e('Test Connection', 'access-platform-sso'); ?>
-                </button>
-            </div>
-            
-            <form method="post" action="">
-                <?php wp_nonce_field('access_sso_settings'); ?>
-                
-                <table class="form-table">
-                    <tr>
-                        <th scope="row">
-                            <label for="platform_url"><?php _e('Access Platform URL', 'access-platform-sso'); ?></label>
-                        </th>
-                        <td>
-                            <input type="url" id="platform_url" name="platform_url" 
-                                   value="<?php echo esc_attr($platform_url); ?>" 
-                                   class="regular-text" required>
-                            <p class="description"><?php _e('The URL of your Access Platform (e.g., https://your-platform.com)', 'access-platform-sso'); ?></p>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <th scope="row">
-                            <label for="site_id"><?php _e('Site ID', 'access-platform-sso'); ?></label>
-                        </th>
-                        <td>
-                            <input type="text" id="site_id" name="site_id" 
-                                   value="<?php echo esc_attr($site_id); ?>" 
-                                   class="regular-text" readonly>
-                            <p class="description"><?php _e('Unique identifier for this WordPress site (auto-generated)', 'access-platform-sso'); ?></p>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <th scope="row">
-                            <label for="jwt_secret"><?php _e('JWT Secret Key', 'access-platform-sso'); ?></label>
-                        </th>
-                        <td>
-                            <textarea id="jwt_secret" name="jwt_secret" rows="3" class="large-text" style="font-family: monospace;"><?php echo esc_textarea($jwt_secret); ?></textarea>
-                            <br><br>
-                            <button type="button" onclick="generateNewSecret()" class="button"><?php _e('Generate New Secret', 'access-platform-sso'); ?></button>
-                            <div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; margin-top: 10px;">
-                                <strong><?php _e('Important:', 'access-platform-sso'); ?></strong> 
-                                <?php _e('Copy this secret to your Access Platform environment variable', 'access-platform-sso'); ?> <code>SSO_JWT_SECRET</code>
-                            </div>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <th scope="row"><?php _e('User Management', 'access-platform-sso'); ?></th>
-                        <td>
-                            <label>
-                                <input type="checkbox" name="auto_provision" value="1" 
-                                       <?php checked($auto_provision, '1'); ?>>
-                                <?php _e('Automatically create WordPress users from SSO data', 'access-platform-sso'); ?>
-                            </label>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <th scope="row">
-                            <label for="default_role"><?php _e('Default User Role', 'access-platform-sso'); ?></label>
-                        </th>
-                        <td>
-                            <select id="default_role" name="default_role">
-                                <?php
-                                $roles = get_editable_roles();
-                                foreach ($roles as $role_key => $role) {
-                                    echo '<option value="' . esc_attr($role_key) . '" ' . 
-                                         selected($default_role, $role_key, false) . '>' . 
-                                         esc_html($role['name']) . '</option>';
-                                }
-                                ?>
-                            </select>
-                            <p class="description"><?php _e('Default role for new users created via SSO', 'access-platform-sso'); ?></p>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <th scope="row"><?php _e('Global Logout', 'access-platform-sso'); ?></th>
-                        <td>
-                            <label>
-                                <input type="checkbox" name="global_logout" value="1" 
-                                       <?php checked($global_logout, '1'); ?>>
-                                <?php _e('Redirect to Access Platform on logout for cross-site logout', 'access-platform-sso'); ?>
-                            </label>
-                        </td>
-                    </tr>
-                </table>
-                
-                <?php submit_button(); ?>
-            </form>
-            
-            <!-- Environment Setup Instructions -->
-            <div style="background: #f8f9fa; padding: 20px; margin: 20px 0; border: 1px solid #dee2e6;">
-                <h3><?php _e('Environment Setup', 'access-platform-sso'); ?></h3>
-                <p><?php _e('Add this to your Access Platform', 'access-platform-sso'); ?> <code>.env.local</code> <?php _e('file:', 'access-platform-sso'); ?></p>
-                <pre style="background: #fff; padding: 10px; border: 1px solid #ccc; overflow-x: auto;">SSO_JWT_SECRET=<?php echo esc_html($jwt_secret); ?></pre>
-                
-                <h3><?php _e('Test SSO Flow', 'access-platform-sso'); ?></h3>
-                <ol>
-                    <li><?php _e('Save these settings', 'access-platform-sso'); ?></li>
-                    <li><?php _e('Test the connection above', 'access-platform-sso'); ?></li>
-                    <li><?php _e('Logout of WordPress', 'access-platform-sso'); ?></li>
-                    <li><?php _e('You should see "Login with Access Platform" button on login page', 'access-platform-sso'); ?></li>
-                </ol>
-            </div>
-        </div>
-        
-        <script>
-        function generateNewSecret() {
-            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
-            let secret = '';
-            for (let i = 0; i < 64; i++) {
-                secret += chars.charAt(Math.floor(Math.random() * chars.length));
-            }
-            document.getElementById('jwt_secret').value = secret;
-            alert('<?php _e('New JWT secret generated! Make sure to save settings and update your Access Platform environment.', 'access-platform-sso'); ?>');
+        // Ensure admin settings are always properly initialized
+        if (!$this->admin_settings) {
+            $this->admin_settings = new AccessSSO_Admin_Settings();
+            $this->admin_settings->init();
         }
         
-        function testConnection() {
-            const btn = document.getElementById('test-connection-btn');
-            const indicator = document.getElementById('status-indicator');
-            const statusText = document.getElementById('status-text');
-            const platformUrl = document.getElementById('platform_url').value;
-            
-            if (!platformUrl) {
-                statusText.textContent = '<?php _e('Please enter Platform URL first', 'access-platform-sso'); ?>';
-                indicator.style.background = 'red';
-                return;
-            }
-            
-            btn.disabled = true;
-            btn.textContent = '<?php _e('Testing...', 'access-platform-sso'); ?>';
-            statusText.textContent = '<?php _e('Testing connection...', 'access-platform-sso'); ?>';
-            indicator.style.background = 'orange';
-            
-            fetch(platformUrl + '/api/sso/health')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'healthy') {
-                        statusText.textContent = '<?php _e('Connection successful!', 'access-platform-sso'); ?>';
-                        indicator.style.background = 'green';
-                    } else {
-                        statusText.textContent = '<?php _e('Connection failed:', 'access-platform-sso'); ?> ' + (data.error || '<?php _e('Unknown error', 'access-platform-sso'); ?>');
-                        indicator.style.background = 'red';
-                    }
-                })
-                .catch(error => {
-                    statusText.textContent = '<?php _e('Connection failed:', 'access-platform-sso'); ?> ' + error.message;
-                    indicator.style.background = 'red';
-                })
-                .finally(() => {
-                    btn.disabled = false;
-                    btn.textContent = '<?php _e('Test Connection', 'access-platform-sso'); ?>';
-                });
-        }
-        
-        // Test connection on page load if URL is set
-        document.addEventListener('DOMContentLoaded', function() {
-            const platformUrl = document.getElementById('platform_url').value;
-            if (platformUrl) {
-                setTimeout(testConnection, 1000);
-            }
-        });
-        </script>
-        <?php
+        // Force register settings to ensure they're available when page renders
+        $this->admin_settings->register_settings();
+        $this->admin_settings->display_page();
     }
     
     // Helper methods
