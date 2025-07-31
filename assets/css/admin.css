@@ -1,0 +1,313 @@
+/* Access Platform SSO Admin Styles */
+
+.access-sso-status-card {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    padding: 20px;
+    margin: 20px 0;
+    box-shadow: 0 1px 1px rgba(0,0,0,.04);
+}
+
+.access-sso-status-card h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 16px;
+}
+
+#connection-status {
+    display: flex;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.status-indicator {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-right: 10px;
+    background: #ddd;
+}
+
+.status-indicator.connected {
+    background: #46b450;
+}
+
+.status-indicator.disconnected {
+    background: #dc3232;
+}
+
+.status-indicator.testing {
+    background: #ffb900;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+.access-sso-stats {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    padding: 20px;
+    margin: 20px 0;
+    box-shadow: 0 1px 1px rgba(0,0,0,.04);
+}
+
+.access-sso-stats h3 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    font-size: 16px;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+}
+
+.stat-card {
+    text-align: center;
+    padding: 20px;
+    background: #f9f9f9;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+}
+
+.stat-number {
+    font-size: 32px;
+    font-weight: bold;
+    color: #23282d;
+    margin-bottom: 5px;
+}
+
+.stat-label {
+    font-size: 14px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.access-sso-tools {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    padding: 20px;
+    margin: 20px 0;
+    box-shadow: 0 1px 1px rgba(0,0,0,.04);
+}
+
+.access-sso-tools h3 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    font-size: 16px;
+}
+
+.tool-section {
+    margin-bottom: 20px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #e5e5e5;
+}
+
+.tool-section:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+
+.tool-section h4 {
+    margin-bottom: 10px;
+    font-size: 14px;
+    color: #23282d;
+}
+
+.tool-section .button {
+    margin-right: 10px;
+    margin-bottom: 5px;
+}
+
+/* Form styling enhancements */
+.form-table th {
+    width: 200px;
+    padding: 20px 10px 20px 0;
+}
+
+.form-table td {
+    padding: 20px 0;
+}
+
+.form-table input[type="text"],
+.form-table input[type="url"],
+.form-table input[type="password"],
+.form-table select,
+.form-table textarea {
+    width: 400px;
+    max-width: 100%;
+}
+
+.form-table textarea {
+    font-family: Monaco, Consolas, "Andale Mono", "DejaVu Sans Mono", monospace;
+    font-size: 12px;
+}
+
+.form-table .description {
+    margin-top: 5px;
+    font-style: italic;
+    color: #666;
+}
+
+/* Button enhancements */
+#generate-secret {
+    margin-left: 10px;
+}
+
+#test-connection {
+    background: #0073aa;
+    border-color: #0073aa;
+    color: #fff;
+}
+
+#test-connection:hover {
+    background: #005a87;
+    border-color: #005a87;
+}
+
+/* Loading states */
+.button.loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.button.loading::after {
+    content: '';
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-left: 8px;
+    border: 2px solid transparent;
+    border-top: 2px solid currentColor;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Success/Error states */
+.settings-error.updated {
+    border-left-color: #46b450;
+}
+
+.settings-error.error {
+    border-left-color: #dc3232;
+}
+
+/* Modal styles for logs and sessions */
+.access-sso-modal {
+    display: none;
+    position: fixed;
+    z-index: 100000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+}
+
+.access-sso-modal-content {
+    background-color: #fff;
+    margin: 5% auto;
+    padding: 20px;
+    border-radius: 4px;
+    width: 80%;
+    max-width: 800px;
+    max-height: 80vh;
+    overflow-y: auto;
+    position: relative;
+}
+
+.access-sso-modal-close {
+    position: absolute;
+    top: 10px;
+    right: 15px;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    color: #aaa;
+}
+
+.access-sso-modal-close:hover {
+    color: #000;
+}
+
+/* Log table styles */
+.access-sso-log-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+.access-sso-log-table th,
+.access-sso-log-table td {
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    text-align: left;
+}
+
+.access-sso-log-table th {
+    background-color: #f9f9f9;
+    font-weight: bold;
+}
+
+.access-sso-log-table tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+.access-sso-log-table .timestamp {
+    white-space: nowrap;
+    font-family: monospace;
+    font-size: 12px;
+}
+
+.access-sso-log-table .event {
+    font-weight: bold;
+}
+
+.access-sso-log-table .event.success {
+    color: #46b450;
+}
+
+.access-sso-log-table .event.error {
+    color: #dc3232;
+}
+
+.access-sso-log-table .event.warning {
+    color: #ffb900;
+}
+
+/* Responsive design */
+@media screen and (max-width: 782px) {
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .form-table input[type="text"],
+    .form-table input[type="url"],
+    .form-table input[type="password"],
+    .form-table select,
+    .form-table textarea {
+        width: 100%;
+    }
+    
+    .access-sso-modal-content {
+        width: 95%;
+        margin: 2% auto;
+        max-height: 90vh;
+    }
+}
