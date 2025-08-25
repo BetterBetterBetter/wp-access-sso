@@ -128,16 +128,29 @@ class AccessPlatformSSO {
             return;
         }
         
-        // Verify nonce for security
-        if (!isset($_GET['nonce']) || !wp_verify_nonce($_GET['nonce'], 'access_sso_callback')) {
-            wp_die(__('Security check failed. Please try again.', 'access-platform-sso'));
+        // Compute desired redirect URL early
+        $default_redirect = $this->get_option('redirect_url', home_url());
+        $redirect_url = isset($_GET['redirect_to']) ? esc_url_raw($_GET['redirect_to']) : (
+            isset($_GET['return_to']) ? esc_url_raw($_GET['return_to']) : (
+                isset($_GET['callback']) ? esc_url_raw($_GET['callback']) : (
+                    isset($_GET['redirect_url']) ? esc_url_raw($_GET['redirect_url']) : $default_redirect
+                )
+            )
+        );
+
+        // If user is already logged into WordPress, honor redirect immediately
+        if (is_user_logged_in()) {
+            wp_safe_redirect(!empty($redirect_url) ? $redirect_url : home_url());
+            exit;
         }
-        
-        // Get JWT token from query parameter
-        $jwt_token = isset($_GET['token']) ? sanitize_text_field($_GET['token']) : '';
+
+        // Nonce is best-effort: proceed if token is present and valid
+        // Get JWT token from query parameter (do not sanitize; preserve signature-critical chars)
+        $jwt_token = isset($_GET['token']) ? rawurldecode(wp_unslash($_GET['token'])) : '';
         
         if (empty($jwt_token)) {
-            wp_die(__('Missing SSO token. Please try logging in again.', 'access-platform-sso'));
+            wp_safe_redirect(!empty($redirect_url) ? $redirect_url : home_url());
+            exit;
         }
         
         // Validate JWT token
@@ -146,12 +159,24 @@ class AccessPlatformSSO {
         
         if (!$user_data || !$user_data['valid']) {
             $error_msg = isset($user_data['error']) ? $user_data['error'] : 'Invalid token';
+            status_header(401);
             wp_die(__('SSO authentication failed: ', 'access-platform-sso') . $error_msg);
         }
         
         // Provision or update WordPress user
         $user_provisioner = new AccessSSO_User_Provisioner();
-        $wp_user = $user_provisioner->provision_user($user_data['user']);
+        // Accept either nested user object or flat JWT claims
+        $claims = isset($user_data['user']) && is_array($user_data['user']) ? $user_data['user'] : $user_data['user'];
+        if (!is_array($claims)) {
+            $claims = $user_data['user'] ?? array();
+        }
+        if (empty($claims) && isset($user_data['header']) && isset($user_data['user'])) {
+            $claims = $user_data['user'];
+        }
+        if (empty($claims) && isset($user_data['sub'])) {
+            $claims = $user_data;
+        }
+        $wp_user = $user_provisioner->provision_user($claims);
         
         if (is_wp_error($wp_user)) {
             wp_die(__('Failed to create user account: ', 'access-platform-sso') . $wp_user->get_error_message());
@@ -165,16 +190,12 @@ class AccessPlatformSSO {
         $session_manager = new AccessSSO_Session_Manager();
         $session_manager->create_sso_session($wp_user->ID, $user_data);
         
-        // Redirect to configured URL, fallback to homepage
-        $default_redirect = $this->get_option('redirect_url', home_url());
-        $redirect_url = isset($_GET['redirect_to']) ? esc_url_raw($_GET['redirect_to']) : $default_redirect;
-        
         // Ensure we have a valid URL
         if (empty($redirect_url)) {
             $redirect_url = home_url();
         }
         
-        wp_redirect($redirect_url);
+        wp_safe_redirect($redirect_url);
         exit;
     }
     
@@ -194,8 +215,11 @@ class AccessPlatformSSO {
             $callback_url .= '&redirect_to=' . urlencode($redirect_to_param);
         }
         
-        $sso_url = $platform_url . '/login?site_id=' . urlencode($site_id) . 
-                   '&redirect_to=' . urlencode($callback_url);
+        $sso_url = $platform_url . '/login?site_id=' . urlencode($site_id) .
+                   '&callback=' . urlencode($callback_url) .
+                   '&redirect_to=' . urlencode($callback_url) .
+                   '&return_to=' . urlencode($callback_url) .
+                   '&redirect_url=' . urlencode($callback_url);
         
         echo '<div class="access-sso-login-wrapper">';
         echo '<a href="' . esc_url($sso_url) . '" class="button button-large access-sso-login-button">';

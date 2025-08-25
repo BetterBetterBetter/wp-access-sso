@@ -29,11 +29,21 @@ class AccessSSO_User_Provisioner {
         }
         
         if (!isset($user_data['email']) || empty($user_data['email'])) {
+            // Try common JWT claim alternatives
+            if (isset($user_data['user']) && is_array($user_data['user']) && isset($user_data['user']['email'])) {
+                $user_data['email'] = $user_data['user']['email'];
+            } elseif (isset($user_data['preferred_username'])) {
+                $user_data['email'] = $user_data['preferred_username'];
+            } elseif (isset($user_data['upn'])) {
+                $user_data['email'] = $user_data['upn'];
+            }
+        }
+        if (!isset($user_data['email']) || empty($user_data['email'])) {
             return new WP_Error('missing_email', __('User email is required', 'access-platform-sso'));
         }
         
         $email = sanitize_email($user_data['email']);
-        $access_platform_id = isset($user_data['id']) ? sanitize_text_field($user_data['id']) : '';
+        $access_platform_id = isset($user_data['id']) ? sanitize_text_field($user_data['id']) : (isset($user_data['sub']) ? sanitize_text_field($user_data['sub']) : '');
         
         // Check if user exists by email or Access Platform ID
         $existing_user = $this->find_existing_user($email, $access_platform_id);

@@ -24,7 +24,16 @@ class AccessSSO_Session_Manager {
         global $wpdb;
         
         $session_token = $this->generate_session_token();
-        $access_platform_id = isset($user_data['user']['id']) ? $user_data['user']['id'] : '';
+        $access_platform_id = '';
+        if (is_array($user_data)) {
+            if (isset($user_data['user']) && is_array($user_data['user']) && isset($user_data['user']['id'])) {
+                $access_platform_id = $user_data['user']['id'];
+            } elseif (isset($user_data['id'])) {
+                $access_platform_id = $user_data['id'];
+            } elseif (isset($user_data['sub'])) { // standard JWT subject claim
+                $access_platform_id = $user_data['sub'];
+            }
+        }
         
         $session_data = array(
             'user_id' => $user_id,
