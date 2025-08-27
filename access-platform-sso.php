@@ -254,15 +254,9 @@ class AccessPlatformSSO {
             $session_manager = new AccessSSO_Session_Manager();
             $session_manager->handle_logout($user_id);
         }
-        
-        // Optionally redirect to Access Platform logout
-        if ($this->get_option('global_logout', '1') === '1') {
-            $platform_url = $this->get_option('platform_url', '');
-            if (!empty($platform_url)) {
-                wp_redirect($platform_url . '/logout?callback=' . urlencode(home_url()));
-                exit;
-            }
-        }
+
+        // Stay on the current WordPress site after logout
+        // No external redirects here to keep user on-site
     }
     
     public function add_admin_menu() {
@@ -327,7 +321,7 @@ class AccessPlatformSSO {
             'site_id' => wp_generate_uuid4(),
             'jwt_secret' => wp_generate_password(64, false),
             'auto_provision' => '1',
-            'global_logout' => '1',
+            'global_logout' => '0',
             'show_login_message' => '1',
             'default_role' => 'subscriber',
             'admin_bypass' => '1',
