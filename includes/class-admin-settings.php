@@ -52,6 +52,14 @@ class AccessSSO_Admin_Settings {
         );
 
         add_settings_field(
+            'access_sso_callback_path',
+            __('Callback Path', 'access-platform-sso'),
+            array($this, 'callback_path_callback'),
+            $this->page_slug,
+            'access_sso_connection'
+        );
+
+        add_settings_field(
             'access_sso_redirect_url',
             __('Post-Login Redirect URL', 'access-platform-sso'),
             array($this, 'redirect_url_callback'),
@@ -59,8 +67,52 @@ class AccessSSO_Admin_Settings {
             'access_sso_connection'
         );
 
-        // Register only connection-related options
-        foreach (array('platform_url', 'site_id', 'jwt_secret', 'redirect_url') as $setting) {
+        // Login Form Detector section
+        add_settings_section(
+            'access_sso_detector',
+            __('Login Form Detection', 'access-platform-sso'),
+            array($this, 'detector_section_callback'),
+            $this->page_slug
+        );
+
+        add_settings_field(
+            'access_sso_button_text',
+            __('Button Text', 'access-platform-sso'),
+            array($this, 'button_text_callback'),
+            $this->page_slug,
+            'access_sso_detector'
+        );
+
+        add_settings_field(
+            'access_sso_enabled_form_types',
+            __('Enabled Form Types', 'access-platform-sso'),
+            array($this, 'enabled_form_types_callback'),
+            $this->page_slug,
+            'access_sso_detector'
+        );
+
+        add_settings_field(
+            'access_sso_excluded_routes',
+            __('Excluded Pages/Routes', 'access-platform-sso'),
+            array($this, 'excluded_routes_callback'),
+            $this->page_slug,
+            'access_sso_detector'
+        );
+
+        add_settings_field(
+            'access_sso_detector_disabled',
+            __('Disable Auto-Detection', 'access-platform-sso'),
+            array($this, 'detector_disabled_callback'),
+            $this->page_slug,
+            'access_sso_detector'
+        );
+
+        // Register all options
+        $settings = array(
+            'platform_url', 'site_id', 'jwt_secret', 'callback_path', 'redirect_url',
+            'button_text', 'divider_text', 'enabled_form_types', 'excluded_routes', 'detector_disabled'
+        );
+        foreach ($settings as $setting) {
             register_setting($this->options_group, 'access_sso_' . $setting);
         }
     }
@@ -114,7 +166,7 @@ class AccessSSO_Admin_Settings {
         $site_id = AccessPlatformSSO::get_instance()->get_option('site_id', '');
         
         if (!empty($platform_url) && !empty($site_id)) {
-            $callback_url = home_url('/?access_sso_callback=1&nonce=' . wp_create_nonce('access_sso_callback'));
+            $callback_url = AccessPlatformSSO::get_instance()->get_callback_url();
             $sso_url = $platform_url . '/login?site_id=' . urlencode($site_id) . '&redirect_to=' . urlencode($callback_url);
             
             echo '<div class="notice notice-info inline" style="margin: 10px 0; padding: 10px;">';
@@ -151,6 +203,19 @@ class AccessSSO_Admin_Settings {
         echo '<p class="description">' . __('Secret key for JWT token validation. Must match the secret in your Access Platform.', 'access-platform-sso') . '</p>';
     }
     
+    public function callback_path_callback() {
+        $value = AccessPlatformSSO::get_instance()->get_option('callback_path', '');
+        $home_url = home_url();
+        
+        echo '<input type="text" name="access_sso_callback_path" value="' . esc_attr($value) . '" class="regular-text" placeholder="/">';
+        echo '<p class="description">' . __('Path where SSO callback is processed. Use this if your homepage doesn\'t run WordPress code.', 'access-platform-sso') . '</p>';
+        echo '<p class="description"><strong>' . __('Important:', 'access-platform-sso') . '</strong> ' . __('Leave empty to use the homepage (/). If your homepage is static or doesn\'t run WordPress, enter a page path that does (e.g., welcome or members).', 'access-platform-sso') . '</p>';
+        
+        // Show current callback URL
+        $callback_url = AccessPlatformSSO::get_instance()->get_callback_url();
+        echo '<p class="description"><strong>' . __('Current Callback URL:', 'access-platform-sso') . '</strong> <code>' . esc_html($callback_url) . '</code></p>';
+    }
+    
     public function redirect_url_callback() {
         $value = AccessPlatformSSO::get_instance()->get_option('redirect_url', '');
         $home_url = home_url();
@@ -163,6 +228,99 @@ class AccessSSO_Admin_Settings {
         echo '<li><code>' . esc_html($home_url . '/dashboard') . '</code> - Custom dashboard</li>';
         echo '<li><code>' . esc_html($home_url . '/my-account') . '</code> - User account page</li>';
         echo '</ul>';
+    }
+    
+    // Login Form Detector callbacks
+    
+    public function detector_section_callback() {
+        echo '<p>' . __('Automatically detect and add SSO login buttons to login forms across your site.', 'access-platform-sso') . '</p>';
+        echo '<p class="description">' . __('The detector finds login forms from MemberPress, LearnDash, WooCommerce, and other plugins, then automatically adds a "Login with Access Platform" button.', 'access-platform-sso') . '</p>';
+    }
+    
+    public function button_text_callback() {
+        $value = AccessPlatformSSO::get_instance()->get_option('button_text', 'Login with Access Platform');
+        
+        echo '<input type="text" name="access_sso_button_text" value="' . esc_attr($value) . '" class="regular-text">';
+        echo '<p class="description">' . __('Text displayed on the SSO login button.', 'access-platform-sso') . '</p>';
+    }
+    
+    public function enabled_form_types_callback() {
+        $value = AccessPlatformSSO::get_instance()->get_option('enabled_form_types', '');
+        
+        $all_types = array(
+            'wordpress' => 'WordPress Core Login',
+            'memberpress' => 'MemberPress',
+            'learndash' => 'LearnDash',
+            'woocommerce' => 'WooCommerce',
+            'ultimatemember' => 'Ultimate Member',
+            'buddypress' => 'BuddyPress / BuddyBoss',
+            'generic' => 'Generic Login Forms (catch-all)'
+        );
+        
+        // Parse current value
+        $enabled = array();
+        if (empty($value)) {
+            $enabled = array_keys($all_types); // All enabled by default
+        } elseif (is_string($value)) {
+            if (strpos($value, '[') === 0) {
+                $enabled = json_decode($value, true) ?: array();
+            } else {
+                $enabled = array_map('trim', explode(',', $value));
+            }
+        }
+        
+        echo '<fieldset>';
+        foreach ($all_types as $type => $label) {
+            $checked = in_array($type, $enabled) ? 'checked' : '';
+            echo '<label style="display: block; margin-bottom: 5px;">';
+            echo '<input type="checkbox" name="access_sso_form_types[]" value="' . esc_attr($type) . '" ' . $checked . '> ';
+            echo esc_html($label);
+            echo '</label>';
+        }
+        echo '</fieldset>';
+        echo '<input type="hidden" name="access_sso_enabled_form_types" id="access_sso_enabled_form_types" value="' . esc_attr($value) . '">';
+        echo '<p class="description">' . __('Select which login form types to detect and enhance with SSO buttons.', 'access-platform-sso') . '</p>';
+        
+        // JavaScript to update the hidden field
+        ?>
+        <script>
+        (function() {
+            function updateFormTypes() {
+                var checkboxes = document.querySelectorAll('input[name="access_sso_form_types[]"]:checked');
+                var values = Array.from(checkboxes).map(function(cb) { return cb.value; });
+                document.getElementById('access_sso_enabled_form_types').value = JSON.stringify(values);
+            }
+            document.querySelectorAll('input[name="access_sso_form_types[]"]').forEach(function(cb) {
+                cb.addEventListener('change', updateFormTypes);
+            });
+            updateFormTypes(); // Initial update
+        })();
+        </script>
+        <?php
+    }
+    
+    public function excluded_routes_callback() {
+        $value = AccessPlatformSSO::get_instance()->get_option('excluded_routes', '');
+        
+        echo '<textarea name="access_sso_excluded_routes" rows="5" class="large-text code" placeholder="/checkout&#10;/cart&#10;/my-account/edit-*">' . esc_textarea($value) . '</textarea>';
+        echo '<p class="description">' . __('Enter page paths to exclude from SSO button injection (one per line).', 'access-platform-sso') . '</p>';
+        echo '<p class="description"><strong>' . __('Supported formats:', 'access-platform-sso') . '</strong></p>';
+        echo '<ul class="description" style="list-style: disc; margin-left: 20px;">';
+        echo '<li><code>/login</code> - ' . __('Exact path match', 'access-platform-sso') . '</li>';
+        echo '<li><code>/checkout*</code> - ' . __('Prefix match (any path starting with /checkout)', 'access-platform-sso') . '</li>';
+        echo '<li><code>checkout</code> - ' . __('Contains match (any URL containing "checkout")', 'access-platform-sso') . '</li>';
+        echo '<li><code>/\\/order-\\d+\\//</code> - ' . __('Regex pattern (wrapped in slashes)', 'access-platform-sso') . '</li>';
+        echo '</ul>';
+    }
+    
+    public function detector_disabled_callback() {
+        $value = AccessPlatformSSO::get_instance()->get_option('detector_disabled', '0');
+        
+        echo '<label>';
+        echo '<input type="checkbox" name="access_sso_detector_disabled" value="1" ' . checked($value, '1', false) . '>';
+        echo ' ' . __('Disable automatic login form detection', 'access-platform-sso');
+        echo '</label>';
+        echo '<p class="description">' . __('Check this to disable the automatic detection and injection of SSO buttons. SSO will only appear on the WordPress login page.', 'access-platform-sso') . '</p>';
     }
     
     

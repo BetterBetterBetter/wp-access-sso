@@ -23,6 +23,7 @@ function access_sso_simple_admin_page() {
         update_option('access_sso_platform_url', sanitize_url($_POST['platform_url']));
         update_option('access_sso_site_id', sanitize_text_field($_POST['site_id']));
         update_option('access_sso_jwt_secret', sanitize_text_field($_POST['jwt_secret']));
+        update_option('access_sso_callback_path', sanitize_text_field($_POST['callback_path']));
         update_option('access_sso_auto_provision', isset($_POST['auto_provision']) ? '1' : '0');
         update_option('access_sso_default_role', sanitize_text_field($_POST['default_role']));
         
@@ -33,6 +34,7 @@ function access_sso_simple_admin_page() {
     $platform_url = get_option('access_sso_platform_url', '');
     $site_id = get_option('access_sso_site_id', wp_generate_uuid4());
     $jwt_secret = get_option('access_sso_jwt_secret', wp_generate_password(64, false));
+    $callback_path = get_option('access_sso_callback_path', '');
     $auto_provision = get_option('access_sso_auto_provision', '1');
     $default_role = get_option('access_sso_default_role', 'subscriber');
     
@@ -98,6 +100,30 @@ function access_sso_simple_admin_page() {
                         <button type="button" onclick="generateNewSecret()" class="button">Generate New Secret</button>
                         <p class="description">
                             <strong>Important:</strong> Copy this secret to your Access Platform environment variable <code>SSO_JWT_SECRET</code>
+                        </p>
+                    </td>
+                </tr>
+                
+                <tr>
+                    <th scope="row">
+                        <label for="callback_path">Callback Path</label>
+                    </th>
+                    <td>
+                        <input type="text" id="callback_path" name="callback_path" 
+                               value="<?php echo esc_attr($callback_path); ?>" 
+                               class="regular-text" placeholder="/">
+                        <p class="description">
+                            Path where SSO callback is processed. <strong>Use this if your homepage doesn't run WordPress code.</strong>
+                        </p>
+                        <p class="description">
+                            Leave empty to use the homepage (<code>/</code>). If your homepage is static, enter a page path that runs WordPress (e.g., <code>welcome</code> or <code>members</code>).
+                        </p>
+                        <?php 
+                        $callback_base = !empty($callback_path) ? '/' . trim($callback_path, '/') . '/' : '/';
+                        $callback_url = home_url($callback_base) . '?access_sso_callback=1';
+                        ?>
+                        <p class="description">
+                            <strong>Current Callback URL:</strong> <code><?php echo esc_html($callback_url); ?></code>
                         </p>
                     </td>
                 </tr>

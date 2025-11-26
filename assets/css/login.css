@@ -208,3 +208,146 @@
         border-width: 2px;
     }
 }
+
+/* ============================================
+   Injected SSO Button Styles (Form Detector)
+   ============================================ */
+
+.access-sso-injected {
+    margin: 15px 0;
+    padding: 0;
+}
+
+.access-sso-injected .access-sso-login-button {
+    display: block;
+    width: 100%;
+    text-align: center;
+    box-sizing: border-box;
+}
+
+/* MemberPress specific styles */
+.mepr-login-form .access-sso-injected,
+.mepr_login_form .access-sso-injected {
+    margin: 20px 0;
+}
+
+.mepr-login-form .access-sso-login-button,
+.mepr_login_form .access-sso-login-button {
+    background: linear-gradient(135deg, #0073aa 0%, #005a87 100%);
+    border-radius: 4px;
+    font-size: 15px;
+    padding: 14px 20px;
+}
+
+/* LearnDash specific styles */
+.learndash-login-form .access-sso-injected,
+.ld-login-form .access-sso-injected,
+.ld-login .access-sso-injected {
+    margin: 20px 0;
+}
+
+.learndash-login-form .access-sso-login-button,
+.ld-login-form .access-sso-login-button,
+.ld-login .access-sso-login-button {
+    background: #0073aa;
+    border-radius: 3px;
+    font-weight: 600;
+}
+
+/* WooCommerce specific styles */
+.woocommerce-form-login .access-sso-injected,
+.woocommerce-form--login .access-sso-injected {
+    margin: 20px 0;
+}
+
+.woocommerce-form-login .access-sso-login-button,
+.woocommerce-form--login .access-sso-login-button {
+    background: #0073aa;
+    border-radius: 3px;
+    font-size: 16px;
+    padding: 12px 24px;
+}
+
+/* Ultimate Member specific styles */
+.um-form .access-sso-injected,
+.um-login .access-sso-injected {
+    margin: 15px 0;
+}
+
+.um-form .access-sso-login-button,
+.um-login .access-sso-login-button {
+    border-radius: 999px;
+    font-size: 14px;
+    padding: 12px 25px;
+}
+
+/* BuddyPress / BuddyBoss specific styles */
+#bp-login-widget-form .access-sso-injected,
+.bp-login-widget-form .access-sso-injected {
+    margin: 10px 0;
+}
+
+/* Generic form styles - inherit parent font */
+.access-sso-injected .access-sso-login-button {
+    font-family: inherit;
+}
+
+/* Ensure divider works in all contexts */
+.access-sso-injected .access-sso-divider {
+    margin: 15px 0;
+}
+
+.access-sso-injected .access-sso-divider span {
+    background: inherit;
+    padding: 0 10px;
+}
+
+/* Try to match common parent backgrounds */
+.access-sso-injected .access-sso-divider span {
+    background-color: #fff;
+}
+
+/* Dark backgrounds */
+.dark .access-sso-injected .access-sso-divider span,
+[data-theme="dark"] .access-sso-injected .access-sso-divider span,
+.bg-dark .access-sso-injected .access-sso-divider span {
+    background-color: #1a1a1a;
+    color: #ccc;
+}
+
+/* Make button stand out on various backgrounds */
+.access-sso-injected .access-sso-login-button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 115, 170, 0.3);
+}
+
+/* Modal/popup login forms */
+.modal .access-sso-injected,
+.popup .access-sso-injected,
+[role="dialog"] .access-sso-injected {
+    margin: 15px 0;
+}
+
+/* Compact mode for small forms/widgets */
+.widget .access-sso-injected,
+.sidebar .access-sso-injected {
+    margin: 10px 0;
+}
+
+.widget .access-sso-login-button,
+.sidebar .access-sso-login-button {
+    font-size: 13px;
+    padding: 10px 15px;
+}
+
+.widget .access-sso-divider,
+.sidebar .access-sso-divider {
+    margin: 10px 0;
+    font-size: 12px;
+}
+
+/* Ensure proper z-index in overlays */
+.access-sso-injected {
+    position: relative;
+    z-index: 1;
+}

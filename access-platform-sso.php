@@ -3,7 +3,7 @@
  * Plugin Name: Access Platform SSO
  * Plugin URI: https://github.com/your-org/access-platform-sso
  * Description: Single Sign-On integration with Access Platform (Supabase Auth)
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Access Platform Team
  * License: GPL v2 or later
  * Text Domain: access-platform-sso
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ACCESS_SSO_VERSION', '1.0.0');
+define('ACCESS_SSO_VERSION', '1.1.0');
 define('ACCESS_SSO_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ACCESS_SSO_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -74,6 +74,15 @@ class AccessPlatformSSO {
             true
         );
         
+        // Login form detector - auto-injects SSO button into MemberPress, LearnDash, etc.
+        wp_enqueue_script(
+            'access-sso-detector',
+            ACCESS_SSO_PLUGIN_URL . 'assets/js/login-form-detector.js',
+            array(),
+            ACCESS_SSO_VERSION,
+            true
+        );
+        
         wp_enqueue_style(
             'access-sso-login',
             ACCESS_SSO_PLUGIN_URL . 'assets/css/login.css',
@@ -88,6 +97,62 @@ class AccessPlatformSSO {
             'platform_url' => $this->get_option('platform_url', ''),
             'site_id' => $this->get_option('site_id', ''),
         ));
+        
+        // Configuration for login form detector
+        $detector_config = array(
+            'platform_url' => $this->get_option('platform_url', ''),
+            'site_id' => $this->get_option('site_id', ''),
+            'callback_url' => $this->get_callback_url(),
+            'ajaxurl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('access_sso_nonce'),
+            'button_text' => $this->get_option('button_text', 'Login with Access Platform'),
+            'divider_text' => $this->get_option('divider_text', 'or'),
+            'disabled' => $this->get_option('detector_disabled', '0') === '1',
+            'show_when_logged_in' => false,
+            'enabled_form_types' => $this->get_enabled_form_types(),
+            'excluded_routes' => $this->get_excluded_routes(),
+        );
+        
+        wp_localize_script('access-sso-detector', 'accessSSODetector', $detector_config);
+    }
+    
+    /**
+     * Get the list of enabled form types for the detector
+     */
+    private function get_enabled_form_types() {
+        $enabled = $this->get_option('enabled_form_types', '');
+        
+        if (empty($enabled)) {
+            // Default: enable all
+            return array('wordpress', 'memberpress', 'learndash', 'woocommerce', 'ultimatemember', 'buddypress', 'generic');
+        }
+        
+        // Parse comma-separated list or JSON array
+        if (is_string($enabled)) {
+            if (strpos($enabled, '[') === 0) {
+                $enabled = json_decode($enabled, true);
+            } else {
+                $enabled = array_map('trim', explode(',', $enabled));
+            }
+        }
+        
+        return is_array($enabled) ? $enabled : array();
+    }
+    
+    /**
+     * Get the list of excluded routes for the detector
+     */
+    private function get_excluded_routes() {
+        $excluded = $this->get_option('excluded_routes', '');
+        
+        if (empty($excluded)) {
+            return array();
+        }
+        
+        // Parse newline-separated list
+        $routes = array_filter(array_map('trim', explode("\n", $excluded)));
+        
+        return $routes;
     }
     
     public function admin_enqueue_scripts($hook) {
@@ -207,7 +272,7 @@ class AccessPlatformSSO {
             return;
         }
         
-        $callback_url = home_url('/?access_sso_callback=1&nonce=' . wp_create_nonce('access_sso_callback'));
+        $callback_url = $this->get_callback_url();
         $redirect_to_param = isset($_GET['redirect_to']) ? $_GET['redirect_to'] : '';
         
         // Add redirect_to to callback URL if specified
@@ -301,6 +366,27 @@ class AccessPlatformSSO {
     }
     
     // Helper methods
+    
+    /**
+     * Get the SSO callback URL, using custom callback path if configured.
+     * Use this when the homepage doesn't have access to WordPress code.
+     */
+    public function get_callback_url() {
+        $callback_path = $this->get_option('callback_path', '');
+        
+        if (!empty($callback_path)) {
+            // Use custom callback path (e.g., /welcome/)
+            $callback_path = '/' . ltrim($callback_path, '/'); // Ensure leading slash
+            $callback_path = rtrim($callback_path, '/') . '/'; // Ensure trailing slash
+            $base_url = home_url($callback_path);
+        } else {
+            // Default to root
+            $base_url = home_url('/');
+        }
+        
+        return $base_url . '?access_sso_callback=1&nonce=' . wp_create_nonce('access_sso_callback');
+    }
+    
     public function get_option($key, $default = '') {
         return get_option('access_sso_' . $key, $default);
     }

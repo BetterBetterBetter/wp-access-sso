@@ -10,6 +10,7 @@ A comprehensive Single Sign-On (SSO) plugin that integrates WordPress sites with
 - **Session Management**: Cross-site session tracking and management
 - **Security Features**: Comprehensive logging, suspicious activity detection, and admin tools
 - **Professional Admin Interface**: Easy-to-use configuration and monitoring dashboard
+- **Login Form Detection**: Automatically detects and enhances login forms from MemberPress, LearnDash, WooCommerce, and more
 
 ## Installation
 
@@ -27,12 +28,78 @@ A comprehensive Single Sign-On (SSO) plugin that integrates WordPress sites with
 
 ### Optional Settings
 
+- **Callback Path**: Path where SSO callback is processed. Use this if your homepage doesn't run WordPress code (e.g., static homepage). Set to `welcome` or `members` to use `/welcome/?access_sso_callback=1` instead.
+- **Post-Login Redirect URL**: Where to redirect users after successful SSO login
 - **Auto-Provision Users**: Automatically create WordPress users from SSO data
 - **Default User Role**: Default role for new users created via SSO
 - **Role Mapping**: JSON configuration for mapping Access Platform roles to WordPress roles
 - **Global Logout**: Redirect to Access Platform on logout for cross-site logout
 - **Admin Bypass**: Allow administrators to bypass SSO and login normally
 - **Enable Logging**: Detailed logging of SSO events for security monitoring
+
+### Sites with Static Homepages
+
+If your WordPress site has a homepage that doesn't run WordPress code (e.g., static HTML, different CMS, or reverse proxy), the SSO callback won't work on the root URL.
+
+**Solution:** Set the **Callback Path** to a WordPress page that does run PHP:
+
+1. Go to Settings > Access Platform SSO
+2. Set **Callback Path** to `welcome` (or any WordPress page slug)
+3. The SSO callback will now use `https://your-site.com/welcome/?access_sso_callback=1`
+4. Set **Post-Login Redirect URL** to where you want users to land after login
+
+## Login Form Detection
+
+The plugin automatically detects login forms across your site and injects an SSO login button. This works with:
+
+### Supported Plugins
+
+- **MemberPress** - All login forms and widgets
+- **LearnDash** - Course login forms and widgets
+- **WooCommerce** - My Account login, checkout login
+- **Ultimate Member** - Login forms and widgets
+- **BuddyPress / BuddyBoss** - Community login forms
+- **Generic** - Any form with username/password fields
+
+### How It Works
+
+1. The JavaScript detector scans the page for known login form patterns
+2. When a login form is found, an SSO button is automatically injected
+3. The button appears above the form fields with an "or" divider
+4. Users can click to authenticate via Access Platform
+
+### Configuration
+
+In **Settings > Access Platform SSO > Login Form Detection**:
+
+- **Button Text**: Customize the SSO button text (default: "Login with Access Platform")
+- **Enabled Form Types**: Choose which plugin forms to detect
+- **Disable Auto-Detection**: Turn off automatic detection if needed
+
+### Manual Integration
+
+If the automatic detector doesn't find your form, you can manually trigger it:
+
+```javascript
+// Inject SSO button into a specific form
+AccessSSODetector.injectInto('#my-custom-login-form');
+
+// Re-scan the page for forms
+AccessSSODetector.detect();
+```
+
+### Adding Custom Form Selectors
+
+You can extend the detector with custom selectors:
+
+```javascript
+// Add custom selectors before page load
+window.accessSSODetector = window.accessSSODetector || {};
+window.accessSSODetector.custom_selectors = [
+    '#my-custom-form',
+    '.my-login-widget form'
+];
+```
 
 ## Usage
 
@@ -172,6 +239,17 @@ For support and bug reports, please contact your Access Platform administrator o
 This plugin is licensed under GPL v2 or later.
 
 ## Changelog
+
+### Version 1.1.0
+- **NEW**: Login Form Detector - Automatically detects and enhances login forms
+- **NEW**: MemberPress support - Works with all MemberPress login forms and widgets
+- **NEW**: LearnDash support - Detects course and widget login forms
+- **NEW**: WooCommerce support - My Account and checkout login forms
+- **NEW**: Callback Path setting - Use custom path for SSO on sites with static homepages
+- **NEW**: Post-Login Redirect URL setting - Configure where users land after SSO
+- **NEW**: Configurable button text and enabled form types
+- Updated MemberPress selectors based on official documentation
+- MutationObserver for detecting dynamically loaded forms
 
 ### Version 1.0.0
 - Initial release
