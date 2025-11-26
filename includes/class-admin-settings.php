@@ -67,6 +67,22 @@ class AccessSSO_Admin_Settings {
             'access_sso_connection'
         );
 
+        // MemberPress Integration section
+        add_settings_section(
+            'access_sso_memberpress',
+            __('MemberPress Integration', 'access-platform-sso'),
+            array($this, 'memberpress_section_callback'),
+            $this->page_slug
+        );
+
+        add_settings_field(
+            'access_sso_memberpress_membership_id',
+            __('Default Membership ID', 'access-platform-sso'),
+            array($this, 'memberpress_membership_id_callback'),
+            $this->page_slug,
+            'access_sso_memberpress'
+        );
+
         // Login Form Detector section
         add_settings_section(
             'access_sso_detector',
@@ -110,6 +126,7 @@ class AccessSSO_Admin_Settings {
         // Register all options
         $settings = array(
             'platform_url', 'site_id', 'jwt_secret', 'callback_path', 'redirect_url',
+            'memberpress_membership_id',
             'button_text', 'divider_text', 'enabled_form_types', 'excluded_routes', 'detector_disabled'
         );
         foreach ($settings as $setting) {
