@@ -241,11 +241,20 @@ class AccessPlatformSSO {
         if (empty($claims) && isset($user_data['sub'])) {
             $claims = $user_data;
         }
+        
+        // Log the SSO attempt for debugging
+        $sso_email = isset($claims['email']) ? $claims['email'] : 'unknown';
+        $sso_sub = isset($claims['sub']) ? $claims['sub'] : (isset($claims['id']) ? $claims['id'] : 'unknown');
+        error_log('[Access SSO] Provisioning user - email: ' . $sso_email . ', sub: ' . $sso_sub);
+        
         $wp_user = $user_provisioner->provision_user($claims);
         
         if (is_wp_error($wp_user)) {
+            error_log('[Access SSO] User provisioning failed - email: ' . $sso_email . ', error: ' . $wp_user->get_error_message());
             wp_die(__('Failed to create user account: ', 'access-platform-sso') . $wp_user->get_error_message());
         }
+        
+        error_log('[Access SSO] User provisioned successfully - email: ' . $sso_email . ', WP user ID: ' . $wp_user->ID);
         
         // Log in the user
         wp_set_auth_cookie($wp_user->ID, true);

@@ -45,15 +45,49 @@ class AccessSSO_User_Provisioner {
         $email = sanitize_email($user_data['email']);
         $access_platform_id = isset($user_data['id']) ? sanitize_text_field($user_data['id']) : (isset($user_data['sub']) ? sanitize_text_field($user_data['sub']) : '');
         
-        // Check if user exists by email or Access Platform ID
-        $existing_user = $this->find_existing_user($email, $access_platform_id);
+        // Use transient-based lock to prevent race conditions from duplicate SSO callbacks
+        // This handles cases where user double-clicks SSO button or browser sends duplicate requests
+        $lock_key = 'access_sso_provision_' . md5(strtolower($email));
+        $lock_value = get_transient($lock_key);
         
-        if ($existing_user) {
-            // Update existing user
-            return $this->update_user($existing_user, $user_data);
-        } else {
-            // Create new user
-            return $this->create_user($user_data);
+        if ($lock_value) {
+            // Another request is currently provisioning this user
+            // Wait briefly and then try to find the user
+            error_log('[Access SSO] Provisioning lock detected for ' . $email . ', waiting for other request to complete');
+            usleep(500000); // 500ms
+            
+            // Try to find the user that should have been created
+            $existing_user = $this->find_existing_user($email, $access_platform_id);
+            if ($existing_user) {
+                error_log('[Access SSO] Found user after lock wait: ' . $existing_user->ID);
+                return $this->update_user($existing_user, $user_data);
+            }
+            // If still not found, proceed with normal flow (lock may have expired)
+        }
+        
+        // Set a short lock (10 seconds) to prevent duplicate provisioning
+        set_transient($lock_key, time(), 10);
+        
+        try {
+            // Check if user exists by email or Access Platform ID
+            $existing_user = $this->find_existing_user($email, $access_platform_id);
+            
+            if ($existing_user) {
+                // Update existing user
+                $result = $this->update_user($existing_user, $user_data);
+            } else {
+                // Create new user
+                $result = $this->create_user($user_data);
+            }
+            
+            // Clear the lock after successful provisioning
+            delete_transient($lock_key);
+            
+            return $result;
+        } catch (Exception $e) {
+            // Clear the lock on error
+            delete_transient($lock_key);
+            throw $e;
         }
     }
     
@@ -98,6 +132,60 @@ class AccessSSO_User_Provisioner {
         $user_id = wp_create_user($username, $password, $email);
         
         if (is_wp_error($user_id)) {
+            // Handle race condition: if email already exists, find and update that user instead
+            // This can happen when:
+            // 1. User double-clicks the SSO button
+            // 2. Browser sends duplicate requests
+            // 3. User was created by another process (sync, webhook, etc.)
+            $error_code = $user_id->get_error_code();
+            $error_message = $user_id->get_error_message();
+            
+            if ($error_code === 'existing_user_email' || 
+                strpos($error_message, 'email address is already used') !== false ||
+                strpos($error_message, 'email already exists') !== false) {
+                
+                error_log('[Access SSO] Race condition detected: email already exists, attempting to find and update user: ' . $email);
+                
+                // Try to find the user by email and update them instead
+                $existing_user = get_user_by('email', $email);
+                if ($existing_user) {
+                    error_log('[Access SSO] Found existing user by email after race condition: ' . $existing_user->ID);
+                    return $this->update_user($existing_user, $user_data);
+                }
+                
+                // If still can't find by email, try by Access Platform ID
+                $access_platform_id = isset($user_data['id']) ? sanitize_text_field($user_data['id']) : 
+                                     (isset($user_data['sub']) ? sanitize_text_field($user_data['sub']) : '');
+                if (!empty($access_platform_id)) {
+                    $users = get_users(array(
+                        'meta_key' => 'access_platform_id',
+                        'meta_value' => $access_platform_id,
+                        'number' => 1,
+                    ));
+                    if (!empty($users)) {
+                        error_log('[Access SSO] Found existing user by Access Platform ID after race condition: ' . $users[0]->ID);
+                        return $this->update_user($users[0], $user_data);
+                    }
+                }
+                
+                // Last resort: the user might exist but with different case email
+                // WordPress email lookup should be case-insensitive, but let's be thorough
+                global $wpdb;
+                $user_id_from_db = $wpdb->get_var($wpdb->prepare(
+                    "SELECT ID FROM $wpdb->users WHERE LOWER(user_email) = LOWER(%s) LIMIT 1",
+                    $email
+                ));
+                if ($user_id_from_db) {
+                    $existing_user = get_user_by('ID', $user_id_from_db);
+                    if ($existing_user) {
+                        error_log('[Access SSO] Found existing user by case-insensitive email query: ' . $existing_user->ID);
+                        return $this->update_user($existing_user, $user_data);
+                    }
+                }
+                
+                error_log('[Access SSO] Could not recover from race condition for email: ' . $email);
+            }
+            
             return $user_id;
         }
         
