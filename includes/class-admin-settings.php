@@ -2,7 +2,7 @@
 /**
  * Admin Settings Class
  * Handles WordPress admin interface for SSO configuration
- */
+ */ 
 
 if (!defined('ABSPATH')) {
     exit;
