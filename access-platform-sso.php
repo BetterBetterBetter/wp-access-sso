@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Access Platform SSO
- * Plugin URI: https://github.com/your-org/access-platform-sso
+ * Plugin URI: https://github.com/BetterBetterBetter/wp-access-sso
  * Description: Single Sign-On integration with Access Platform (Supabase Auth)
  * Version: 1.1.1
  * Author: Access Platform Team
@@ -18,6 +18,20 @@ if (!defined('ABSPATH')) {
 define('ACCESS_SSO_VERSION', '1.1.1');
 define('ACCESS_SSO_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ACCESS_SSO_PLUGIN_URL', plugin_dir_url(__FILE__));
+
+// Plugin Update Checker - GitHub integration
+if (file_exists(ACCESS_SSO_PLUGIN_DIR . 'plugin-update-checker/plugin-update-checker.php')) {
+    require_once ACCESS_SSO_PLUGIN_DIR . 'plugin-update-checker/plugin-update-checker.php';
+    
+    $updateChecker = YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
+        'https://github.com/BetterBetterBetter/wp-access-sso',
+        __FILE__,
+        'access-platform-sso'
+    );
+    
+    // Enable GitHub releases for better versioning
+    $updateChecker->getVcsApi()->enableReleaseAssets();
+}
 
 class AccessPlatformSSO {
     
