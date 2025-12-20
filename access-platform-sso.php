@@ -46,6 +46,9 @@ class AccessPlatformSSO {
     }
     
     private function __construct() {
+        // Include required files immediately to ensure classes are available for all hooks
+        $this->include_files();
+
         add_action('init', array($this, 'init'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('admin_enqueue_scripts', array($this, 'admin_enqueue_scripts'));
@@ -67,9 +70,6 @@ class AccessPlatformSSO {
     public function init() {
         // Load text domain for translations
         load_plugin_textdomain('access-platform-sso', false, dirname(plugin_basename(__FILE__)) . '/languages');
-        
-        // Include required files
-        $this->include_files();
     }
     
     private function include_files() {
