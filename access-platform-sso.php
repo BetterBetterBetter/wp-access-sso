@@ -19,6 +19,12 @@ define('ACCESS_SSO_VERSION', '1.1.2');
 define('ACCESS_SSO_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ACCESS_SSO_PLUGIN_URL', plugin_dir_url(__FILE__));
 
+// Include required files immediately to ensure classes are available for all hooks
+require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-jwt-validator.php';
+require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-user-provisioner.php';
+require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-session-manager.php';
+require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-admin-settings.php';
+
 // Plugin Update Checker - GitHub integration
 if (file_exists(ACCESS_SSO_PLUGIN_DIR . 'plugin-update-checker/plugin-update-checker.php')) {
     require_once ACCESS_SSO_PLUGIN_DIR . 'plugin-update-checker/plugin-update-checker.php';
@@ -46,9 +52,6 @@ class AccessPlatformSSO {
     }
     
     private function __construct() {
-        // Include required files immediately to ensure classes are available for all hooks
-        $this->include_files();
-
         add_action('init', array($this, 'init'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('admin_enqueue_scripts', array($this, 'admin_enqueue_scripts'));
@@ -70,13 +73,6 @@ class AccessPlatformSSO {
     public function init() {
         // Load text domain for translations
         load_plugin_textdomain('access-platform-sso', false, dirname(plugin_basename(__FILE__)) . '/languages');
-    }
-    
-    private function include_files() {
-        require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-jwt-validator.php';
-        require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-user-provisioner.php';
-        require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-session-manager.php';
-        require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-admin-settings.php';
     }
     
     public function enqueue_scripts() {
