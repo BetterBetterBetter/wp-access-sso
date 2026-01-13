@@ -12,12 +12,10 @@ class AccessSSO_User_Provisioner {
     
     private $auto_provision;
     private $default_role;
-    private $role_mapping;
     
     public function __construct() {
         $this->auto_provision = AccessPlatformSSO::get_instance()->get_option('auto_provision', '1') === '1';
         $this->default_role = AccessPlatformSSO::get_instance()->get_option('default_role', 'subscriber');
-        $this->role_mapping = $this->get_role_mapping();
     }
     
     /**
@@ -209,31 +207,17 @@ class AccessSSO_User_Provisioner {
     
     /**
      * Update existing WordPress user
+     * NOTE: SSO only handles authentication - we do NOT modify WordPress roles here.
+     * Role management should be handled by WordPress admins, not SSO.
      */
     private function update_user($user, $user_data) {
-        $role = $this->map_user_role($user_data);
-        $display_name = $this->get_display_name($user_data);
-        
-        // Update user data
-        wp_update_user(array(
-            'ID' => $user->ID,
-            'display_name' => $display_name,
-            'first_name' => isset($user_data['first_name']) ? sanitize_text_field($user_data['first_name']) : '',
-            'last_name' => isset($user_data['last_name']) ? sanitize_text_field($user_data['last_name']) : '',
-        ));
-        
-        // Update role if different
-        if (!in_array($role, $user->roles)) {
-            $user->set_role($role);
-        }
-        
-        // Update Access Platform metadata
+        // Update Access Platform metadata (for tracking SSO logins)
         $this->update_user_metadata($user->ID, $user_data);
         
         // Log user update
         $this->log_user_action('updated', $user->ID, $user_data);
         
-        return get_user_by('ID', $user->ID);
+        return $user;
     }
     
     /**
@@ -282,42 +266,12 @@ class AccessSSO_User_Provisioner {
     }
     
     /**
-     * Map Access Platform role to WordPress role
+     * Map Access Platform role to WordPress role (for NEW users only)
+     * Returns the default role configured in plugin settings
      */
     private function map_user_role($user_data) {
-        // Check for explicit role mapping
-        if (isset($user_data['role']) && !empty($user_data['role'])) {
-            $access_role = sanitize_text_field($user_data['role']);
-            
-            if (isset($this->role_mapping[$access_role])) {
-                $wp_role = $this->role_mapping[$access_role];
-                
-                // Verify role exists in WordPress
-                if (get_role($wp_role)) {
-                    return $wp_role;
-                }
-            }
-        }
-        
-        // Check subscription status for automatic role mapping
-        if (isset($user_data['subscription_status'])) {
-            switch ($user_data['subscription_status']) {
-                case 'ACTIVE':
-                    return isset($this->role_mapping['active_subscriber']) ? 
-                           $this->role_mapping['active_subscriber'] : 'subscriber';
-                case 'EXPIRED':
-                case 'CANCELED':
-                    return isset($this->role_mapping['inactive_subscriber']) ? 
-                           $this->role_mapping['inactive_subscriber'] : 'subscriber';
-            }
-        }
-        
-        // Check admin status
-        if (isset($user_data['is_admin']) && $user_data['is_admin']) {
-            return 'administrator';
-        }
-        
-        // Default role
+        // For new users, just use the default role from settings
+        // SSO should not manage WordPress roles - that's for WP admins to handle
         return $this->default_role;
     }
     
@@ -351,32 +305,6 @@ class AccessSSO_User_Provisioner {
         
         // Update sync timestamp
         update_user_meta($user_id, 'access_last_sync', current_time('mysql'));
-    }
-    
-    /**
-     * Get role mapping configuration
-     */
-    private function get_role_mapping() {
-        $default_mapping = array(
-            'admin' => 'administrator',
-            'editor' => 'editor',
-            'author' => 'author',
-            'contributor' => 'contributor',
-            'subscriber' => 'subscriber',
-            'active_subscriber' => 'subscriber',
-            'inactive_subscriber' => 'subscriber',
-        );
-        
-        $custom_mapping = AccessPlatformSSO::get_instance()->get_option('role_mapping', '');
-        
-        if (!empty($custom_mapping)) {
-            $parsed_mapping = json_decode($custom_mapping, true);
-            if (is_array($parsed_mapping)) {
-                return array_merge($default_mapping, $parsed_mapping);
-            }
-        }
-        
-        return $default_mapping;
     }
     
     /**
