@@ -1,0 +1,92 @@
+.access-sso-impersonation-banner {
+    box-sizing: border-box;
+    background: #fff8e5;
+    border: 1px solid #dba617;
+    color: #1d2327;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+.access-sso-impersonation-banner--frontend {
+    position: sticky;
+    top: 0;
+    z-index: 99999;
+    width: 100%;
+    padding: 12px 20px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.access-sso-impersonation-banner--admin {
+    padding: 12px;
+}
+
+.access-sso-impersonation-banner__content {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.access-sso-impersonation-banner__message {
+    margin: 0;
+}
+
+.access-sso-impersonation-banner__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.access-sso-impersonation-banner__button {
+    display: inline-block;
+    padding: 6px 12px;
+    border: 1px solid #8a6500;
+    border-radius: 3px;
+    background: #8a6500;
+    color: #fff;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.access-sso-impersonation-banner__button:hover,
+.access-sso-impersonation-banner__button:focus {
+    background: #674b00;
+    border-color: #674b00;
+    color: #fff;
+    text-decoration: none;
+}
+
+.access-sso-impersonation-banner__button:focus {
+    outline: 2px solid #1d2327;
+    outline-offset: 2px;
+}
+
+.access-sso-impersonation-banner__button--secondary {
+    background: transparent;
+    color: #674b00;
+}
+
+.access-sso-impersonation-banner__button--secondary:hover,
+.access-sso-impersonation-banner__button--secondary:focus {
+    background: #674b00;
+    color: #fff;
+}
+
+@media screen and (max-width: 600px) {
+    .access-sso-impersonation-banner--frontend {
+        padding: 10px 12px;
+    }
+
+    .access-sso-impersonation-banner__content,
+    .access-sso-impersonation-banner__actions {
+        display: block;
+    }
+
+    .access-sso-impersonation-banner__button {
+        margin-top: 8px;
+        margin-right: 8px;
+    }
+}

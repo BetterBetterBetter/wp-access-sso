@@ -40,9 +40,13 @@ if (file_exists(ACCESS_SSO_PLUGIN_DIR . 'plugin-update-checker/plugin-update-che
 }
 
 class AccessPlatformSSO {
+    const IMPERSONATION_COOKIE = 'access_sso_impersonation';
+    const IMPERSONATION_TRANSIENT_PREFIX = 'access_sso_impersonation_';
+    const IMPERSONATION_TTL = 86400;
     
     private static $instance = null;
     private $admin_settings = null;
+    private $impersonation_banner_rendered = false;
     
     public static function get_instance() {
         if (null === self::$instance) {
@@ -60,10 +64,13 @@ class AccessPlatformSSO {
         add_action('init', array($this, 'handle_sso_callback'));
         add_action('wp_login', array($this, 'handle_wp_login'), 10, 2);
         add_action('wp_logout', array($this, 'handle_wp_logout'));
+        add_action('wp_body_open', array($this, 'render_frontend_impersonation_banner'));
+        add_action('wp_footer', array($this, 'render_frontend_impersonation_banner'));
         
         // Admin hooks
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'admin_init'));
+        add_action('admin_notices', array($this, 'render_admin_impersonation_banner'));
         
         // Login form customization
         add_action('login_form', array($this, 'add_sso_login_button'));
@@ -99,6 +106,8 @@ class AccessPlatformSSO {
             array(),
             ACCESS_SSO_VERSION
         );
+
+        $this->enqueue_impersonation_banner_styles();
         
         // Localize script with settings
         wp_localize_script('access-sso-frontend', 'accessSSO', array(
@@ -166,6 +175,8 @@ class AccessPlatformSSO {
     }
     
     public function admin_enqueue_scripts($hook) {
+        $this->enqueue_impersonation_banner_styles();
+
         $is_settings_page = (
             isset($_GET['page']) && $_GET['page'] === 'access-platform-sso'
         ) || ('settings_page_access-platform-sso' === $hook);
@@ -251,13 +262,17 @@ class AccessPlatformSSO {
         if (empty($claims) && isset($user_data['sub'])) {
             $claims = $user_data;
         }
+
+        $impersonation_context = $this->extract_impersonation_context($claims);
+        $provisioning_claims = $claims;
+        unset($provisioning_claims['impersonation']);
         
         // Log the SSO attempt for debugging
-        $sso_email = isset($claims['email']) ? $claims['email'] : 'unknown';
-        $sso_sub = isset($claims['sub']) ? $claims['sub'] : (isset($claims['id']) ? $claims['id'] : 'unknown');
+        $sso_email = isset($provisioning_claims['email']) ? $provisioning_claims['email'] : 'unknown';
+        $sso_sub = isset($provisioning_claims['sub']) ? $provisioning_claims['sub'] : (isset($provisioning_claims['id']) ? $provisioning_claims['id'] : 'unknown');
         error_log('[Access SSO] Provisioning user - email: ' . $sso_email . ', sub: ' . $sso_sub);
         
-        $wp_user = $user_provisioner->provision_user($claims);
+        $wp_user = $user_provisioner->provision_user($provisioning_claims);
         
         if (is_wp_error($wp_user)) {
             error_log('[Access SSO] User provisioning failed - email: ' . $sso_email . ', error: ' . $wp_user->get_error_message());
@@ -273,6 +288,12 @@ class AccessPlatformSSO {
         // Create SSO session
         $session_manager = new AccessSSO_Session_Manager();
         $session_manager->create_sso_session($wp_user->ID, $user_data);
+
+        if ($impersonation_context) {
+            $this->store_impersonation_context($wp_user->ID, $impersonation_context);
+        } else {
+            $this->clear_impersonation_context();
+        }
         
         // Ensure we have a valid URL
         if (empty($redirect_url)) {
@@ -339,8 +360,33 @@ class AccessPlatformSSO {
             $session_manager->handle_logout($user_id);
         }
 
+        $this->clear_impersonation_context();
+
         // Stay on the current WordPress site after logout
         // No external redirects here to keep user on-site
+    }
+
+    public function render_frontend_impersonation_banner() {
+        if (is_admin() || $this->impersonation_banner_rendered) {
+            return;
+        }
+
+        $context = $this->get_impersonation_context();
+        if (!$context) {
+            return;
+        }
+
+        $this->render_impersonation_banner($context, false);
+        $this->impersonation_banner_rendered = true;
+    }
+
+    public function render_admin_impersonation_banner() {
+        $context = $this->get_impersonation_context();
+        if (!$context) {
+            return;
+        }
+
+        $this->render_impersonation_banner($context, true);
     }
     
     public function add_admin_menu() {
@@ -416,6 +462,180 @@ class AccessPlatformSSO {
     
     public function delete_option($key) {
         return delete_option('access_sso_' . $key);
+    }
+
+    private function enqueue_impersonation_banner_styles() {
+        if (!$this->get_impersonation_context()) {
+            return;
+        }
+
+        wp_enqueue_style(
+            'access-sso-impersonation-banner',
+            ACCESS_SSO_PLUGIN_URL . 'assets/css/impersonation-banner.css',
+            array(),
+            ACCESS_SSO_VERSION
+        );
+    }
+
+    private function extract_impersonation_context($claims) {
+        if (!is_array($claims) || !isset($claims['impersonation']) || !is_array($claims['impersonation'])) {
+            return false;
+        }
+
+        $impersonation = $claims['impersonation'];
+        if (!isset($impersonation['active']) || $impersonation['active'] !== true) {
+            return false;
+        }
+
+        return array(
+            'targetEmail' => isset($impersonation['targetEmail']) ? sanitize_email($impersonation['targetEmail']) : '',
+            'adminEmail' => isset($impersonation['adminEmail']) ? sanitize_email($impersonation['adminEmail']) : '',
+            'startedAt' => isset($impersonation['startedAt']) ? sanitize_text_field($impersonation['startedAt']) : '',
+            'returnToAccessUrl' => isset($impersonation['returnToAccessUrl']) ? $this->sanitize_impersonation_url($impersonation['returnToAccessUrl']) : '',
+            'exitImpersonationUrl' => isset($impersonation['exitImpersonationUrl']) ? $this->sanitize_impersonation_url($impersonation['exitImpersonationUrl']) : '',
+        );
+    }
+
+    private function sanitize_impersonation_url($url) {
+        $url = esc_url_raw($url, array('http', 'https'));
+        if (empty($url)) {
+            return '';
+        }
+
+        $scheme = wp_parse_url($url, PHP_URL_SCHEME);
+        if (!in_array(strtolower((string) $scheme), array('http', 'https'), true)) {
+            return '';
+        }
+
+        return $url;
+    }
+
+    private function store_impersonation_context($user_id, $context) {
+        $session_key = wp_generate_password(43, false, false);
+        $context['user_id'] = (int) $user_id;
+
+        set_transient($this->get_impersonation_transient_key($session_key), $context, self::IMPERSONATION_TTL);
+        $this->set_impersonation_cookie($session_key, time() + self::IMPERSONATION_TTL);
+    }
+
+    private function get_impersonation_context() {
+        if (!is_user_logged_in()) {
+            return false;
+        }
+
+        $session_key = $this->get_impersonation_session_key();
+        if (empty($session_key)) {
+            return false;
+        }
+
+        $context = get_transient($this->get_impersonation_transient_key($session_key));
+        if (!is_array($context) || !isset($context['user_id']) || (int) $context['user_id'] !== get_current_user_id()) {
+            $this->clear_impersonation_context();
+            return false;
+        }
+
+        return $context;
+    }
+
+    private function clear_impersonation_context() {
+        $session_key = $this->get_impersonation_session_key();
+        if (!empty($session_key)) {
+            delete_transient($this->get_impersonation_transient_key($session_key));
+        }
+
+        $this->set_impersonation_cookie('', time() - self::IMPERSONATION_TTL);
+        unset($_COOKIE[self::IMPERSONATION_COOKIE]);
+    }
+
+    private function get_impersonation_session_key() {
+        if (empty($_COOKIE[self::IMPERSONATION_COOKIE])) {
+            return '';
+        }
+
+        $session_key = sanitize_text_field(wp_unslash($_COOKIE[self::IMPERSONATION_COOKIE]));
+        if (!preg_match('/^[A-Za-z0-9]+$/', $session_key)) {
+            return '';
+        }
+
+        return $session_key;
+    }
+
+    private function get_impersonation_transient_key($session_key) {
+        return self::IMPERSONATION_TRANSIENT_PREFIX . hash('sha256', $session_key);
+    }
+
+    private function set_impersonation_cookie($value, $expiration) {
+        if (!headers_sent()) {
+            $cookie_path = defined('COOKIEPATH') && COOKIEPATH ? COOKIEPATH : '/';
+            $cookie_domain = defined('COOKIE_DOMAIN') ? COOKIE_DOMAIN : '';
+
+            if (PHP_VERSION_ID >= 70300) {
+                setcookie(self::IMPERSONATION_COOKIE, $value, array(
+                    'expires' => $expiration,
+                    'path' => $cookie_path,
+                    'domain' => $cookie_domain,
+                    'secure' => is_ssl(),
+                    'httponly' => true,
+                    'samesite' => 'Lax',
+                ));
+            } else {
+                setcookie(
+                    self::IMPERSONATION_COOKIE,
+                    $value,
+                    $expiration,
+                    $cookie_path . '; samesite=Lax',
+                    $cookie_domain,
+                    is_ssl(),
+                    true
+                );
+            }
+        }
+
+        if ($expiration > time() && !empty($value)) {
+            $_COOKIE[self::IMPERSONATION_COOKIE] = $value;
+        }
+    }
+
+    private function render_impersonation_banner($context, $is_admin = false) {
+        $target_email = !empty($context['targetEmail']) ? $context['targetEmail'] : __('the target user', 'access-platform-sso');
+        $admin_email = !empty($context['adminEmail']) ? $context['adminEmail'] : __('an Access admin', 'access-platform-sso');
+        $class_names = $is_admin
+            ? 'notice notice-warning access-sso-impersonation-banner access-sso-impersonation-banner--admin'
+            : 'access-sso-impersonation-banner access-sso-impersonation-banner--frontend';
+
+        echo '<div class="' . esc_attr($class_names) . '" role="status" aria-live="polite">';
+        echo '<div class="access-sso-impersonation-banner__content">';
+        echo '<p class="access-sso-impersonation-banner__message">';
+        echo '<strong>' . esc_html__('Access impersonation active.', 'access-platform-sso') . '</strong> ';
+        echo esc_html(
+            sprintf(
+                __('This WordPress session was launched by Access admin %1$s impersonating %2$s.', 'access-platform-sso'),
+                $admin_email,
+                $target_email
+            )
+        );
+        echo '</p>';
+
+        if (!empty($context['returnToAccessUrl']) || !empty($context['exitImpersonationUrl'])) {
+            echo '<div class="access-sso-impersonation-banner__actions">';
+
+            if (!empty($context['returnToAccessUrl'])) {
+                echo '<a class="access-sso-impersonation-banner__button" href="' . esc_url($context['returnToAccessUrl']) . '">';
+                echo esc_html__('Return to Access', 'access-platform-sso');
+                echo '</a>';
+            }
+
+            if (!empty($context['exitImpersonationUrl'])) {
+                echo '<a class="access-sso-impersonation-banner__button access-sso-impersonation-banner__button--secondary" href="' . esc_url($context['exitImpersonationUrl']) . '">';
+                echo esc_html__('Exit impersonation', 'access-platform-sso');
+                echo '</a>';
+            }
+
+            echo '</div>';
+        }
+
+        echo '</div>';
+        echo '</div>';
     }
     
     // Plugin activation hook
