@@ -3,7 +3,7 @@
  * Plugin Name: Access Platform SSO
  * Plugin URI: https://github.com/BetterBetterBetter/wp-access-sso
  * Description: Single Sign-On integration with Access Platform (Supabase Auth)
- * Version: 1.1.5
+ * Version: 1.1.6
  * Author: Access Platform Team
  * License: GPL v2 or later
  * Text Domain: access-platform-sso
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ACCESS_SSO_VERSION', '1.1.5');
+define('ACCESS_SSO_VERSION', '1.1.6');
 define('ACCESS_SSO_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ACCESS_SSO_PLUGIN_URL', plugin_dir_url(__FILE__));
 
