@@ -62,6 +62,7 @@ class AccessPlatformSSO {
         
         // SSO Authentication hooks
         add_action('init', array($this, 'handle_sso_callback'));
+        add_action('init', array($this, 'handle_impersonation_exit'));
         add_action('wp_login', array($this, 'handle_wp_login'), 10, 2);
         add_action('wp_logout', array($this, 'handle_wp_logout'));
         add_action('wp_body_open', array($this, 'render_frontend_impersonation_banner'));
@@ -224,17 +225,12 @@ class AccessPlatformSSO {
             )
         );
 
-        // If user is already logged into WordPress, honor redirect immediately
-        if (is_user_logged_in()) {
-            wp_safe_redirect(!empty($redirect_url) ? $redirect_url : home_url());
-            exit;
-        }
-
         // Nonce is best-effort: proceed if token is present and valid
         // Get JWT token from query parameter (do not sanitize; preserve signature-critical chars)
         $jwt_token = isset($_GET['token']) ? rawurldecode(wp_unslash($_GET['token'])) : '';
         
         if (empty($jwt_token)) {
+            // Existing logged-in callback hits without a token are just redirects.
             wp_safe_redirect(!empty($redirect_url) ? $redirect_url : home_url());
             exit;
         }
@@ -301,6 +297,34 @@ class AccessPlatformSSO {
         }
         
         wp_safe_redirect($redirect_url);
+        exit;
+    }
+
+    public function handle_impersonation_exit() {
+        if (!isset($_GET['access_sso_exit_impersonation']) || $_GET['access_sso_exit_impersonation'] !== '1') {
+            return;
+        }
+
+        $nonce = isset($_GET['nonce']) ? sanitize_text_field(wp_unslash($_GET['nonce'])) : '';
+        if (!wp_verify_nonce($nonce, 'access_sso_exit_impersonation')) {
+            wp_die(__('Invalid impersonation exit request.', 'access-platform-sso'));
+        }
+
+        $context = $this->get_impersonation_context();
+        $exit_url = is_array($context) && !empty($context['exitImpersonationUrl']) ? $context['exitImpersonationUrl'] : '';
+
+        $this->clear_impersonation_context();
+
+        if (is_user_logged_in()) {
+            wp_logout();
+        }
+
+        if (empty($exit_url)) {
+            wp_safe_redirect(home_url());
+            exit;
+        }
+
+        wp_redirect($exit_url);
         exit;
     }
     
@@ -564,6 +588,16 @@ class AccessPlatformSSO {
         return self::IMPERSONATION_TRANSIENT_PREFIX . hash('sha256', $session_key);
     }
 
+    private function get_impersonation_exit_url() {
+        return add_query_arg(
+            array(
+                'access_sso_exit_impersonation' => '1',
+                'nonce' => wp_create_nonce('access_sso_exit_impersonation'),
+            ),
+            home_url('/')
+        );
+    }
+
     private function set_impersonation_cookie($value, $expiration) {
         if (!headers_sent()) {
             $cookie_path = defined('COOKIEPATH') && COOKIEPATH ? COOKIEPATH : '/';
@@ -626,7 +660,7 @@ class AccessPlatformSSO {
             }
 
             if (!empty($context['exitImpersonationUrl'])) {
-                echo '<a class="access-sso-impersonation-banner__button access-sso-impersonation-banner__button--secondary" href="' . esc_url($context['exitImpersonationUrl']) . '">';
+                echo '<a class="access-sso-impersonation-banner__button access-sso-impersonation-banner__button--secondary" href="' . esc_url($this->get_impersonation_exit_url()) . '">';
                 echo esc_html__('Exit impersonation', 'access-platform-sso');
                 echo '</a>';
             }

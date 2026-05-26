@@ -8,6 +8,7 @@ This repository does not currently include a root PHPUnit, Composer, or WordPres
    - Complete SSO with a valid JWT that has no `impersonation` claim.
    - Confirm the user logs in normally.
    - Confirm no Access impersonation banner appears on frontend pages or in `wp-admin`.
+   - While already logged into WordPress from a previous impersonation session, complete SSO again with a valid non-impersonation JWT and confirm the old banner is cleared.
 
 2. JWT with active impersonation claim:
    - Complete SSO with a valid JWT containing `impersonation.active === true`.
@@ -15,6 +16,7 @@ This repository does not currently include a root PHPUnit, Composer, or WordPres
    - Confirm the banner appears on frontend pages and in `wp-admin`.
    - Confirm `Return to Access` links to `returnToAccessUrl`.
    - Confirm `Exit impersonation` appears only when `exitImpersonationUrl` is provided.
+   - Confirm clicking `Exit impersonation` clears the local WordPress impersonation banner, logs out the impersonated WordPress session, and redirects to Access.
 
 3. Logout clears impersonation context:
    - Log out of WordPress from a session with an active impersonation banner.
