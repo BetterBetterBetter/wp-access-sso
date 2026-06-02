@@ -60,12 +60,12 @@ add_action('admin_notices', function() {
     }
 });
 
-// Force regenerate default options
+// Force regenerate non-identity default options
 add_action('admin_init', function() {
     if (isset($_GET['page']) && $_GET['page'] === 'access-platform-sso' && isset($_GET['regenerate_options'])) {
         $default_options = array(
             'platform_url' => '',
-            'site_id' => wp_generate_uuid4(),
+            'site_id_verified' => '0',
             'jwt_secret' => wp_generate_password(64, false),
             'auto_provision' => '1',
             'global_logout' => '1',
@@ -78,6 +78,10 @@ add_action('admin_init', function() {
             update_option('access_sso_' . $key, $value);
         }
         
+        if (false === get_option('access_sso_site_id')) {
+            update_option('access_sso_site_id', '');
+        }
+
         wp_redirect(admin_url('options-general.php?page=access-platform-sso&options_generated=1'));
         exit;
     }

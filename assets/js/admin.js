@@ -51,9 +51,15 @@
         var $text = $('#status-text');
         
         var platformUrl = $('input[name="access_sso_platform_url"]').val();
+        var siteId = $('input[name="access_sso_site_id"]').val();
         
         if (!platformUrl) {
             showNotice('Platform URL is required', 'error');
+            return;
+        }
+
+        if (!siteId) {
+            showNotice('Canonical Access site ID is required', 'error');
             return;
         }
         
@@ -70,7 +76,9 @@
                 action: 'access_sso_test_connection',
                 nonce: accessSSOAdmin.nonce,
                 security: accessSSOAdmin.nonce,
-                _ajax_nonce: accessSSOAdmin.nonce
+                _ajax_nonce: accessSSOAdmin.nonce,
+                platform_url: platformUrl,
+                site_id: siteId
             },
             success: function(response) {
                 if (response.success) {
@@ -166,8 +174,9 @@
     
     function updateConnectionStatus() {
         var platformUrl = $('input[name="access_sso_platform_url"]').val();
+        var siteId = $('input[name="access_sso_site_id"]').val();
         
-        if (!platformUrl) {
+        if (!platformUrl || !siteId) {
             $('#status-indicator').removeClass('connected testing').addClass('disconnected');
             $('#status-text').text('Not configured');
             return;

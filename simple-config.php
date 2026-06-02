@@ -21,7 +21,16 @@ function access_sso_simple_admin_page() {
     // Handle form submission
     if (isset($_POST['submit']) && check_admin_referer('access_sso_simple_settings')) {
         update_option('access_sso_platform_url', sanitize_url($_POST['platform_url']));
-        update_option('access_sso_site_id', sanitize_text_field($_POST['site_id']));
+        $submitted_site_id = sanitize_text_field($_POST['site_id']);
+        $existing_site_id = get_option('access_sso_site_id', '');
+        if (!empty($submitted_site_id) || empty($existing_site_id)) {
+            update_option('access_sso_site_id', $submitted_site_id);
+            update_option('access_sso_site_id_verified', '0');
+            update_option(
+                'access_sso_site_id_validation_error',
+                empty($submitted_site_id) ? 'Canonical Access site ID is missing.' : 'Site ID must be verified against Access.'
+            );
+        }
         update_option('access_sso_jwt_secret', sanitize_text_field($_POST['jwt_secret']));
         update_option('access_sso_callback_path', sanitize_text_field($_POST['callback_path']));
         update_option('access_sso_auto_provision', isset($_POST['auto_provision']) ? '1' : '0');
@@ -32,16 +41,13 @@ function access_sso_simple_admin_page() {
     
     // Get current values
     $platform_url = get_option('access_sso_platform_url', '');
-    $site_id = get_option('access_sso_site_id', wp_generate_uuid4());
+    $site_id = get_option('access_sso_site_id', '');
     $jwt_secret = get_option('access_sso_jwt_secret', wp_generate_password(64, false));
     $callback_path = get_option('access_sso_callback_path', '');
     $auto_provision = get_option('access_sso_auto_provision', '1');
     $default_role = get_option('access_sso_default_role', 'subscriber');
     
-    // Update defaults if empty
-    if (empty(get_option('access_sso_site_id'))) {
-        update_option('access_sso_site_id', $site_id);
-    }
+    // Update non-identity defaults if empty. Site IDs must come from Access.
     if (empty(get_option('access_sso_jwt_secret'))) {
         update_option('access_sso_jwt_secret', $jwt_secret);
     }
@@ -78,13 +84,13 @@ function access_sso_simple_admin_page() {
                 
                 <tr>
                     <th scope="row">
-                        <label for="site_id">Site ID</label>
+                        <label for="site_id">Canonical Access Site ID</label>
                     </th>
                     <td>
                         <input type="text" id="site_id" name="site_id" 
                                value="<?php echo esc_attr($site_id); ?>" 
-                               class="regular-text" readonly>
-                        <p class="description">Unique identifier for this WordPress site (auto-generated)</p>
+                               class="regular-text">
+                        <p class="description">Paste the canonical site ID from Access. Do not use a locally generated plugin ID.</p>
                     </td>
                 </tr>
                 
@@ -199,27 +205,47 @@ function access_sso_simple_admin_page() {
         const btn = document.getElementById('test-connection-btn');
         const status = document.getElementById('connection-status');
         const platformUrl = document.getElementById('platform_url').value;
+        const siteId = document.getElementById('site_id').value;
         
         if (!platformUrl) {
             status.innerHTML = '<span style="color: red;">Please enter Platform URL first</span>';
+            return;
+        }
+
+        if (!siteId) {
+            status.innerHTML = '<span style="color: red;">Please enter the canonical Access site ID first</span>';
             return;
         }
         
         btn.disabled = true;
         btn.textContent = 'Testing...';
         status.innerHTML = '<span style="color: orange;">Testing connection...</span>';
+
+        const body = new URLSearchParams({
+            action: 'access_sso_test_connection',
+            nonce: '<?php echo esc_js(wp_create_nonce('access_sso_nonce')); ?>',
+            security: '<?php echo esc_js(wp_create_nonce('access_sso_nonce')); ?>',
+            platform_url: platformUrl,
+            site_id: siteId
+        });
         
-        fetch(platformUrl + '/api/sso/health')
+        fetch(ajaxurl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body
+        })
             .then(response => response.json())
             .then(data => {
-                if (data.status === 'healthy') {
-                    status.innerHTML = '<span style="color: green;">✅ Connection successful!</span>';
+                if (data.success) {
+                    status.innerHTML = '<span style="color: green;">Connection successful. Canonical site ID verified.</span>';
                 } else {
-                    status.innerHTML = '<span style="color: red;">❌ Connection failed: ' + (data.error || 'Unknown error') + '</span>';
+                    status.innerHTML = '<span style="color: red;">Connection failed: ' + ((data.data && data.data.message) || 'Unknown error') + '</span>';
                 }
             })
             .catch(error => {
-                status.innerHTML = '<span style="color: red;">❌ Connection failed: ' + error.message + '</span>';
+                status.innerHTML = '<span style="color: red;">Connection failed: ' + error.message + '</span>';
             })
             .finally(() => {
                 btn.disabled = false;

@@ -113,11 +113,21 @@ class AccessSSO_Admin_Settings {
             'button_text', 'divider_text', 'enabled_form_types', 'excluded_routes', 'detector_disabled'
         );
         foreach ($settings as $setting) {
-            register_setting($this->options_group, 'access_sso_' . $setting);
+            $args = array();
+
+            if ($setting === 'site_id') {
+                $args['sanitize_callback'] = array($this, 'sanitize_site_id');
+            }
+
+            register_setting($this->options_group, 'access_sso_' . $setting, $args);
         }
     }
     
     public function display_page() {
+        if (isset($_GET['settings-updated']) && $_GET['settings-updated']) {
+            $this->validate_saved_site_configuration();
+        }
+
         if (isset($_POST['submit'])) {
             // Handle form submission
             echo '<div class="notice notice-success"><p>' . __('Settings saved.', 'access-platform-sso') . '</p></div>';
@@ -159,7 +169,7 @@ class AccessSSO_Admin_Settings {
     
     // Section callbacks
     public function connection_section_callback() {
-        echo '<p>' . __('Configure the connection to your Access Platform.', 'access-platform-sso') . '</p>';
+        echo '<p>' . __('Configure the connection to your Access Platform. The canonical Access site ID is the source of truth for SSO.', 'access-platform-sso') . '</p>';
         
         // Show current SSO URL for testing
         $platform_url = AccessPlatformSSO::get_instance()->get_option('platform_url', '');
@@ -188,8 +198,30 @@ class AccessSSO_Admin_Settings {
     
     public function site_id_callback() {
         $value = AccessPlatformSSO::get_instance()->get_option('site_id', '');
-        echo '<input type="text" name="access_sso_site_id" value="' . esc_attr($value) . '" class="regular-text" readonly>';
-        echo '<p class="description">' . __('Unique identifier for this WordPress site. Generated automatically.', 'access-platform-sso') . '</p>';
+        $is_verified = get_option('access_sso_site_id_verified', '0') === '1';
+        $validation_error = get_option('access_sso_site_id_validation_error', '');
+        $stored_site_url = get_option('access_sso_site_url', '');
+
+        echo '<input type="text" id="access_sso_site_id" name="access_sso_site_id" value="' . esc_attr($value) . '" class="regular-text" autocomplete="off">';
+        echo '<p class="description"><strong>' . esc_html__('Canonical Access site ID:', 'access-platform-sso') . '</strong> ' . esc_html__('Paste the site ID from Access. This value must already exist in Access; the plugin no longer generates trusted site IDs locally.', 'access-platform-sso') . '</p>';
+
+        if (empty($value)) {
+            echo '<p class="description"><strong>' . esc_html__('Status:', 'access-platform-sso') . '</strong> ' . esc_html__('Missing canonical Access site ID.', 'access-platform-sso') . '</p>';
+        } elseif ($is_verified) {
+            echo '<p class="description"><strong>' . esc_html__('Status:', 'access-platform-sso') . '</strong> ' . esc_html__('Verified canonical Access site ID.', 'access-platform-sso') . '</p>';
+        } else {
+            echo '<p class="description"><strong>' . esc_html__('Status:', 'access-platform-sso') . '</strong> ' . esc_html__('Local plugin-stored ID, not verified as canonical in Access.', 'access-platform-sso') . '</p>';
+        }
+
+        echo '<p class="description"><strong>' . esc_html__('WordPress home URL:', 'access-platform-sso') . '</strong> <code>' . esc_html(home_url()) . '</code></p>';
+
+        if (!empty($stored_site_url)) {
+            echo '<p class="description"><strong>' . esc_html__('Last verified Access site URL:', 'access-platform-sso') . '</strong> <code>' . esc_html($stored_site_url) . '</code></p>';
+        }
+
+        if (!empty($validation_error) && !$is_verified) {
+            echo '<p class="description"><strong>' . esc_html__('Last validation error:', 'access-platform-sso') . '</strong> ' . esc_html($validation_error) . '</p>';
+        }
     }
     
     public function jwt_secret_callback() {
@@ -327,12 +359,68 @@ class AccessSSO_Admin_Settings {
     
     
     
+    public function sanitize_site_id($value) {
+        $value = sanitize_text_field($value);
+        $existing = AccessPlatformSSO::get_instance()->get_option('site_id', '');
+
+        if (empty($value) && !empty($existing)) {
+            return $existing;
+        }
+
+        if ($value !== $existing) {
+            update_option('access_sso_site_id_verified', '0');
+            update_option('access_sso_site_id_validation_code', empty($value) ? 'missing_site_id' : 'unverified');
+            update_option(
+                'access_sso_site_id_validation_error',
+                empty($value)
+                    ? __('Canonical Access site ID is missing.', 'access-platform-sso')
+                    : __('Site ID changed locally and must be verified against Access.', 'access-platform-sso')
+            );
+        }
+
+        return $value;
+    }
+
+    public function validate_saved_site_configuration() {
+        $platform_url = AccessPlatformSSO::get_instance()->get_option('platform_url', '');
+        $site_id = AccessPlatformSSO::get_instance()->get_option('site_id', '');
+
+        $result = access_sso_validate_configured_site($platform_url, $site_id, home_url());
+        access_sso_store_site_validation_result($result, array(
+            'platform_url' => $platform_url,
+            'site_id' => $site_id,
+            'source' => 'settings_save',
+        ));
+
+        if (is_wp_error($result)) {
+            add_settings_error(
+                'access_sso_settings',
+                $result->get_error_code(),
+                $result->get_error_message(),
+                'error'
+            );
+            return;
+        }
+
+        add_settings_error(
+            'access_sso_settings',
+            'site_validation_success',
+            __('Settings saved. Access recognizes this canonical site ID and the site host matches.', 'access-platform-sso'),
+            'success'
+        );
+    }
+
     private function test_connection() {
         $platform_url = sanitize_url($_POST['access_sso_platform_url'] ?? '');
-        $jwt_secret = sanitize_text_field($_POST['access_sso_jwt_secret'] ?? '');
+        $site_id = sanitize_text_field($_POST['access_sso_site_id'] ?? '');
         
         if (empty($platform_url)) {
             add_settings_error('access_sso_settings', 'missing_url', __('Platform URL is required', 'access-platform-sso'));
+            return;
+        }
+
+        if (empty($site_id)) {
+            add_settings_error('access_sso_settings', 'missing_site_id', __('Canonical Access site ID is required', 'access-platform-sso'));
             return;
         }
         
@@ -357,10 +445,26 @@ class AccessSSO_Admin_Settings {
         $status_code = wp_remote_retrieve_response_code($response);
         
         if ($status_code === 200) {
+            $site_validation = access_sso_validate_configured_site($platform_url, $site_id, home_url());
+            access_sso_store_site_validation_result($site_validation, array(
+                'platform_url' => $platform_url,
+                'site_id' => $site_id,
+                'source' => 'settings_connection_test',
+            ));
+
+            if (is_wp_error($site_validation)) {
+                add_settings_error(
+                    'access_sso_settings',
+                    $site_validation->get_error_code(),
+                    $site_validation->get_error_message()
+                );
+                return;
+            }
+
             add_settings_error(
                 'access_sso_settings',
                 'connection_success',
-                __('Connection successful!', 'access-platform-sso'),
+                __('Connection successful. Access recognizes this canonical site ID and the site host matches.', 'access-platform-sso'),
                 'success'
             );
         } else {
