@@ -124,6 +124,8 @@ class SiteIdSafetyTests(unittest.TestCase):
         self.assertIn("'Invalid issuer'", source)
         self.assertIn("'Invalid audience'", source)
         self.assertIn("'Invalid site ID'", source)
+        self.assertIn("const DEFAULT_JWT_AUDIENCE = 'wordpress-sso'", source)
+        self.assertIn("'aud' => self::DEFAULT_JWT_AUDIENCE", source)
         self.assertIn("'verified' => array", source)
         self.assertIn("'signature' => true", source)
         self.assertNotIn("Host matched; accept despite ID mismatch", source)

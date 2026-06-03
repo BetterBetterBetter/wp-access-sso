@@ -9,6 +9,7 @@ if (!defined('ABSPATH')) {
 }
 
 class AccessSSO_JWT_Validator {
+    const DEFAULT_JWT_AUDIENCE = 'wordpress-sso';
     
     private $platform_url;
     private $jwt_secret;
@@ -115,7 +116,7 @@ class AccessSSO_JWT_Validator {
             return array('valid' => false, 'error' => 'Invalid issuer');
         }
 
-        // Check audience against the configured canonical Access site ID by default.
+        // Check audience against Access's SSO audience. The exact site binding is the site_id claim below.
         $expected_audiences = $this->get_expected_audiences();
         if (!isset($decoded_payload['aud']) || !$this->audience_matches($decoded_payload['aud'], $expected_audiences)) {
             return array('valid' => false, 'error' => 'Invalid audience');
@@ -152,10 +153,10 @@ class AccessSSO_JWT_Validator {
     }
 
     /**
-     * Expected audience defaults to the canonical Access site ID.
+     * Expected audience defaults to Access's fixed WordPress SSO audience.
      */
     private function get_expected_audiences() {
-        $audiences = array_filter(array($this->site_id));
+        $audiences = array(self::DEFAULT_JWT_AUDIENCE);
         $audiences = apply_filters('access_sso_expected_jwt_audiences', $audiences, $this->site_id);
 
         if (!is_array($audiences)) {
@@ -265,7 +266,7 @@ class AccessSSO_JWT_Validator {
         
         $payload = array_merge($user_data, array(
             'iss' => $this->get_expected_issuer(),
-            'aud' => $this->site_id,
+            'aud' => self::DEFAULT_JWT_AUDIENCE,
             'iat' => time(),
             'exp' => time() + (15 * 60), // 15 minutes
             'site_id' => $this->site_id,
