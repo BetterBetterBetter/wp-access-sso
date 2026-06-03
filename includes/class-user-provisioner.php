@@ -206,18 +206,17 @@ class AccessSSO_User_Provisioner {
     }
     
     /**
-     * Update existing WordPress user
-     * NOTE: SSO only handles authentication - we do NOT modify WordPress roles here.
-     * Role management should be handled by WordPress admins, not SSO.
+     * Update existing WordPress user.
      */
     private function update_user($user, $user_data) {
         // Update Access Platform metadata (for tracking SSO logins)
         $this->update_user_metadata($user->ID, $user_data);
+        $this->maybe_promote_user_to_administrator($user, $user_data);
         
         // Log user update
         $this->log_user_action('updated', $user->ID, $user_data);
         
-        return $user;
+        return get_user_by('ID', $user->ID);
     }
     
     /**
@@ -266,13 +265,67 @@ class AccessSSO_User_Provisioner {
     }
     
     /**
-     * Map Access Platform role to WordPress role (for NEW users only)
-     * Returns the default role configured in plugin settings
+     * Map Access Platform role to WordPress role (for NEW users only).
      */
     private function map_user_role($user_data) {
-        // For new users, just use the default role from settings
-        // SSO should not manage WordPress roles - that's for WP admins to handle
+        if ($this->should_promote_to_administrator($user_data)) {
+            return 'administrator';
+        }
+
         return $this->default_role;
+    }
+
+    /**
+     * Promote verified Access admins without downgrading anyone else.
+     */
+    private function maybe_promote_user_to_administrator($user, $user_data) {
+        if (!$this->should_promote_to_administrator($user_data)) {
+            return;
+        }
+
+        if (in_array('administrator', (array) $user->roles, true)) {
+            return;
+        }
+
+        $user->set_role('administrator');
+    }
+
+    /**
+     * Access admin intent must come from a fully validated JWT.
+     */
+    private function should_promote_to_administrator($user_data) {
+        if (!$this->has_verified_privileged_claims($user_data)) {
+            return false;
+        }
+
+        if (!get_role('administrator')) {
+            return false;
+        }
+
+        if (isset($user_data['is_admin']) && $user_data['is_admin'] === true) {
+            return true;
+        }
+
+        if (isset($user_data['access_role']) && strtolower((string) $user_data['access_role']) === 'admin') {
+            return true;
+        }
+
+        return isset($user_data['role']) && $user_data['role'] === 'administrator';
+    }
+
+    private function has_verified_privileged_claims($user_data) {
+        if (empty($user_data['_access_sso_validation']) || !is_array($user_data['_access_sso_validation'])) {
+            return false;
+        }
+
+        $required_checks = array('signature', 'expiration', 'issuer', 'audience', 'site_id');
+        foreach ($required_checks as $check) {
+            if (!isset($user_data['_access_sso_validation'][$check]) || $user_data['_access_sso_validation'][$check] !== true) {
+                return false;
+            }
+        }
+
+        return true;
     }
     
     /**

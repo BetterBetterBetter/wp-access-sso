@@ -6,6 +6,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_PLUGIN = ROOT / "access-platform-sso.php"
 ADMIN_SETTINGS = ROOT / "includes" / "class-admin-settings.php"
+JWT_VALIDATOR = ROOT / "includes" / "class-jwt-validator.php"
+USER_PROVISIONER = ROOT / "includes" / "class-user-provisioner.php"
 SIMPLE_CONFIG = ROOT / "simple-config.php"
 DEBUG_ADMIN = ROOT / "debug-sso-admin.php"
 
@@ -59,6 +61,10 @@ class SiteIdSafetyTests(unittest.TestCase):
         self.assertIn("access_sso_validate_configured_site", source)
         self.assertIn("'site_not_found'", source)
         self.assertIn("Access does not recognize the configured site ID", source)
+        self.assertIn("trailingslashit($platform_url) . 'api/sso/site/validate'", source)
+        self.assertIn("wp_remote_post($validation_url", source)
+        self.assertIn("'site_id' => $site_id", source)
+        self.assertIn("'home_url' => $home_url", source)
         self.assertRegex(
             source,
             r"access_sso_test_connection[\s\S]+access_sso_validate_configured_site",
@@ -110,6 +116,42 @@ class SiteIdSafetyTests(unittest.TestCase):
         self.assertIn("access_sso_maybe_notify_stored_site_validation_issue", source)
         self.assertIn("source' => 'admin_notice'", source)
         self.assertIn("Access admins will be notified centrally", source)
+
+    def test_jwt_validation_requires_privileged_trust_claims(self):
+        source = read(JWT_VALIDATOR)
+
+        self.assertIn("'Token expiration missing'", source)
+        self.assertIn("'Invalid issuer'", source)
+        self.assertIn("'Invalid audience'", source)
+        self.assertIn("'Invalid site ID'", source)
+        self.assertIn("'verified' => array", source)
+        self.assertIn("'signature' => true", source)
+        self.assertNotIn("Host matched; accept despite ID mismatch", source)
+        self.assertNotIn("redirect_url host matches this WordPress host", source)
+
+    def test_admin_sso_claims_promote_without_customer_downgrade(self):
+        source = read(USER_PROVISIONER)
+
+        self.assertIn("should_promote_to_administrator", source)
+        self.assertIn("has_verified_privileged_claims", source)
+        self.assertIn("$user_data['is_admin'] === true", source)
+        self.assertIn("$user_data['access_role']) && strtolower((string) $user_data['access_role']) === 'admin'", source)
+        self.assertIn("$user_data['role']) && $user_data['role'] === 'administrator'", source)
+        self.assertIn("$user->set_role('administrator')", source)
+        self.assertIn("return $this->default_role", source)
+
+    def test_sso_callback_passes_verified_claims_before_redirecting(self):
+        source = read(MAIN_PLUGIN)
+
+        token_position = source.index("$jwt_token = isset($_GET['token'])")
+        validation_position = source.index("$jwt_validator = new AccessSSO_JWT_Validator()")
+        provisioning_position = source.index("$wp_user = $user_provisioner->provision_user($provisioning_claims)")
+        final_redirect_position = source.index("wp_safe_redirect($redirect_url)")
+
+        self.assertLess(token_position, validation_position)
+        self.assertLess(validation_position, provisioning_position)
+        self.assertLess(provisioning_position, final_redirect_position)
+        self.assertIn("$provisioning_claims['_access_sso_validation']", source)
 
 
 if __name__ == "__main__":

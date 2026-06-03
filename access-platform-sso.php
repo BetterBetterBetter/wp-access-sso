@@ -262,6 +262,9 @@ class AccessPlatformSSO {
 
         $impersonation_context = $this->extract_impersonation_context($claims);
         $provisioning_claims = $claims;
+        $provisioning_claims['_access_sso_validation'] = isset($user_data['verified']) && is_array($user_data['verified'])
+            ? $user_data['verified']
+            : array();
         unset($provisioning_claims['impersonation']);
         
         // Log the SSO attempt for debugging
@@ -791,88 +794,53 @@ function access_sso_validate_configured_site($platform_url, $site_id, $home_url 
         return new WP_Error('missing_site_id', __('Canonical Access site ID is not configured. Connect this site to Access or paste the canonical Access site ID.', 'access-platform-sso'));
     }
 
-    $base_url = trailingslashit($platform_url) . 'api/sso/';
-    $requests = array(
-        array(
-            'method' => 'GET',
-            'url' => $base_url . 'sites/' . rawurlencode($site_id),
-        ),
-        array(
-            'method' => 'GET',
-            'url' => add_query_arg('site_id', $site_id, $base_url . 'sites'),
-        ),
-        array(
-            'method' => 'GET',
-            'url' => add_query_arg('site_id', $site_id, $base_url . 'site'),
-        ),
-        array(
-            'method' => 'POST',
-            'url' => $base_url . 'site/validate',
-            'body' => array(
-                'site_id' => $site_id,
-                'home_url' => $home_url,
-            ),
-        ),
+    $validation_url = apply_filters(
+        'access_sso_site_validation_url',
+        trailingslashit($platform_url) . 'api/sso/site/validate',
+        $platform_url,
+        $site_id,
+        $home_url
     );
 
-    $requests = apply_filters('access_sso_site_verification_requests', $requests, $platform_url, $site_id, $home_url);
+    $response = wp_remote_post($validation_url, array(
+        'timeout' => 15,
+        'headers' => array(
+            'Accept' => 'application/json',
+            'Content-Type' => 'application/json',
+            'User-Agent' => 'Access Platform SSO Plugin v' . ACCESS_SSO_VERSION,
+        ),
+        'body' => wp_json_encode(array(
+            'site_id' => $site_id,
+            'home_url' => $home_url,
+        )),
+    ));
 
-    $last_error = __('Unable to verify the Access site ID.', 'access-platform-sso');
-    $not_found_error = '';
+    if (is_wp_error($response)) {
+        return new WP_Error('site_verification_failed', $response->get_error_message());
+    }
 
-    foreach ($requests as $request) {
-        $method = isset($request['method']) ? strtoupper($request['method']) : 'GET';
-        $url = isset($request['url']) ? $request['url'] : '';
+    $status_code = wp_remote_retrieve_response_code($response);
+    $body = wp_remote_retrieve_body($response);
+    $data = json_decode($body, true);
+    $response_error_code = access_sso_extract_response_error_code($data);
+    $response_error_message = access_sso_extract_response_error_message($data);
 
-        if (empty($url)) {
-            continue;
+    if ($status_code === 200) {
+        $site = access_sso_extract_site_from_response($data, $site_id);
+        $endpoint_verified = access_sso_response_indicates_site_valid($data);
+
+        if (empty($site) && !$endpoint_verified) {
+            return new WP_Error(
+                'site_verification_failed',
+                __('Access responded successfully but did not verify the configured site ID.', 'access-platform-sso')
+            );
         }
 
-        $args = array(
-            'timeout' => 15,
-            'headers' => array(
-                'Accept' => 'application/json',
-                'User-Agent' => 'Access Platform SSO Plugin v' . ACCESS_SSO_VERSION,
-            ),
-        );
+        $access_site_url = !empty($site) ? access_sso_extract_site_url($site) : '';
+        $wordpress_host = access_sso_normalize_host(wp_parse_url($home_url, PHP_URL_HOST));
+        $access_host = !empty($access_site_url) ? access_sso_normalize_host(access_sso_extract_host($access_site_url)) : '';
 
-        if ($method === 'POST') {
-            $args['headers']['Content-Type'] = 'application/json';
-            $args['body'] = wp_json_encode(isset($request['body']) ? $request['body'] : array('site_id' => $site_id));
-            $response = wp_remote_post($url, $args);
-        } else {
-            $response = wp_remote_get($url, $args);
-        }
-
-        if (is_wp_error($response)) {
-            $last_error = $response->get_error_message();
-            continue;
-        }
-
-        $status_code = wp_remote_retrieve_response_code($response);
-        $body = wp_remote_retrieve_body($response);
-        $data = json_decode($body, true);
-        $response_error_code = access_sso_extract_response_error_code($data);
-
-        if ($status_code === 200) {
-            $site = access_sso_extract_site_from_response($data, $site_id);
-
-            if (empty($site)) {
-                $last_error = __('Access responded successfully but did not return a matching site record.', 'access-platform-sso');
-                continue;
-            }
-
-            $access_site_url = access_sso_extract_site_url($site);
-            if (empty($access_site_url)) {
-                return new WP_Error(
-                    'site_url_missing',
-                    __('Access recognized the site ID but did not return a site URL/domain to verify against this WordPress home URL.', 'access-platform-sso')
-                );
-            }
-
-            $wordpress_host = access_sso_normalize_host(wp_parse_url($home_url, PHP_URL_HOST));
-            $access_host = access_sso_normalize_host(access_sso_extract_host($access_site_url));
-
+        if (!empty($access_site_url)) {
             if (empty($wordpress_host) || empty($access_host)) {
                 return new WP_Error(
                     'site_host_missing',
@@ -896,40 +864,69 @@ function access_sso_validate_configured_site($platform_url, $site_id, $home_url 
                     )
                 );
             }
-
-            return array(
-                'site_id' => $site_id,
-                'site' => $site,
-                'access_site_url' => $access_site_url,
-                'access_host' => $access_host,
-                'wordpress_home_url' => $home_url,
-                'wordpress_host' => $wordpress_host,
-            );
         }
 
-        if ($response_error_code === 'site_not_found' || $status_code === 404 || $status_code === 410) {
-            $not_found_error = sprintf(
-                __('Access does not recognize the configured site ID "%s". Replace it with the canonical Access site ID for this WordPress site.', 'access-platform-sso'),
-                $site_id
-            );
-
-            if ($response_error_code === 'site_not_found') {
-                return new WP_Error('site_not_found', $not_found_error);
-            }
-        }
-
-        $last_error = sprintf(
-            __('Access site verification returned status %1$d from %2$s.', 'access-platform-sso'),
-            $status_code,
-            $url
+        return array(
+            'site_id' => $site_id,
+            'site' => $site,
+            'access_site_url' => $access_site_url,
+            'access_host' => $access_host,
+            'wordpress_home_url' => $home_url,
+            'wordpress_host' => $wordpress_host,
         );
     }
 
-    if (!empty($not_found_error)) {
-        return new WP_Error('site_not_found', $not_found_error);
+    if ($response_error_code === 'site_not_found' || $status_code === 404 || $status_code === 410) {
+        return new WP_Error(
+            'site_not_found',
+            !empty($response_error_message)
+                ? $response_error_message
+                : sprintf(
+                    __('Access does not recognize the configured site ID "%s". Replace it with the canonical Access site ID for this WordPress site.', 'access-platform-sso'),
+                    $site_id
+                )
+        );
     }
 
-    return new WP_Error('site_verification_failed', $last_error);
+    if (in_array($response_error_code, array('site_host_mismatch', 'site_host_missing', 'site_url_missing'), true)) {
+        return new WP_Error(
+            $response_error_code,
+            !empty($response_error_message)
+                ? $response_error_message
+                : __('Access could not verify this WordPress home URL for the configured canonical site ID.', 'access-platform-sso')
+        );
+    }
+
+    return new WP_Error(
+        'site_verification_failed',
+        !empty($response_error_message)
+            ? $response_error_message
+            : sprintf(
+                __('Access site verification returned status %1$d from %2$s.', 'access-platform-sso'),
+                $status_code,
+                $validation_url
+            )
+    );
+}
+
+function access_sso_response_indicates_site_valid($data) {
+    if (!is_array($data)) {
+        return false;
+    }
+
+    foreach (array('valid', 'verified', 'success') as $key) {
+        if (isset($data[$key]) && $data[$key] === true) {
+            return true;
+        }
+    }
+
+    foreach (array('data', 'result') as $key) {
+        if (!empty($data[$key]) && is_array($data[$key]) && access_sso_response_indicates_site_valid($data[$key])) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function access_sso_extract_response_error_code($data) {
@@ -949,6 +946,37 @@ function access_sso_extract_response_error_code($data) {
 
     if (!empty($data['data']) && is_array($data['data'])) {
         return access_sso_extract_response_error_code($data['data']);
+    }
+
+    return '';
+}
+
+function access_sso_extract_response_error_message($data) {
+    if (!is_array($data)) {
+        return '';
+    }
+
+    foreach (array('message', 'error_description', 'error_message') as $key) {
+        if (!empty($data[$key]) && is_string($data[$key])) {
+            return $data[$key];
+        }
+    }
+
+    if (!empty($data['error']) && is_string($data['error'])) {
+        return $data['error'];
+    }
+
+    if (!empty($data['error']) && is_array($data['error'])) {
+        return access_sso_extract_response_error_message($data['error']);
+    }
+
+    foreach (array('data', 'result') as $key) {
+        if (!empty($data[$key]) && is_array($data[$key])) {
+            $message = access_sso_extract_response_error_message($data[$key]);
+            if (!empty($message)) {
+                return $message;
+            }
+        }
     }
 
     return '';

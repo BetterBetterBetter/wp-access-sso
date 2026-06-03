@@ -99,30 +99,99 @@ class AccessSSO_JWT_Validator {
             return array('valid' => false, 'error' => 'Invalid signature');
         }
         
-        // Check expiration
-        if (isset($decoded_payload['exp']) && $decoded_payload['exp'] < time()) {
+        // Check expiration. Privileged claims are only trusted on bounded tokens.
+        if (!isset($decoded_payload['exp']) || !is_numeric($decoded_payload['exp'])) {
+            return array('valid' => false, 'error' => 'Token expiration missing');
+        }
+
+        if ((int) $decoded_payload['exp'] <= time()) {
             return array('valid' => false, 'error' => 'Token expired');
         }
-        
-        // Check site_id if present (with graceful fallback)
+
+        // Check issuer against the configured Access Platform URL.
+        $expected_issuer = $this->get_expected_issuer();
+        $token_issuer = isset($decoded_payload['iss']) ? $this->normalize_url_claim($decoded_payload['iss']) : '';
+        if (empty($expected_issuer) || empty($token_issuer) || $token_issuer !== $expected_issuer) {
+            return array('valid' => false, 'error' => 'Invalid issuer');
+        }
+
+        // Check audience against the configured canonical Access site ID by default.
+        $expected_audiences = $this->get_expected_audiences();
+        if (!isset($decoded_payload['aud']) || !$this->audience_matches($decoded_payload['aud'], $expected_audiences)) {
+            return array('valid' => false, 'error' => 'Invalid audience');
+        }
+
+        // Check exact canonical Access site_id. Do not fall back to host matching.
         $payload_site_id = isset($decoded_payload['site_id']) ? $decoded_payload['site_id'] : (isset($decoded_payload['site']['site_id']) ? $decoded_payload['site']['site_id'] : null);
-        if ($payload_site_id && $this->site_id && $payload_site_id !== $this->site_id) {
-            // Fallback: allow if redirect_url host matches this WordPress host
-            $redirect_url_in_token = isset($decoded_payload['redirect_url']) ? $decoded_payload['redirect_url'] : '';
-            $wp_host = parse_url(home_url(), PHP_URL_HOST);
-            $token_host = $redirect_url_in_token ? parse_url($redirect_url_in_token, PHP_URL_HOST) : '';
-            if (!$token_host || !$wp_host || strtolower($token_host) !== strtolower($wp_host)) {
-                error_log('[Access SSO] Site ID mismatch. token_site_id=' . $payload_site_id . ' wp_site_id=' . $this->site_id . ' token_host=' . $token_host . ' wp_host=' . $wp_host);
-                return array('valid' => false, 'error' => 'Invalid site ID');
-            }
-            // Host matched; accept despite ID mismatch (multi-env compatibility)
+        if (empty($payload_site_id) || empty($this->site_id) || $payload_site_id !== $this->site_id) {
+            error_log('[Access SSO] Site ID mismatch. token_site_id=' . $payload_site_id . ' wp_site_id=' . $this->site_id);
+            return array('valid' => false, 'error' => 'Invalid site ID');
         }
         
         return array(
             'valid' => true,
             'user' => $decoded_payload,
-            'header' => $decoded_header
+            'header' => $decoded_header,
+            'verified' => array(
+                'signature' => true,
+                'expiration' => true,
+                'issuer' => true,
+                'audience' => true,
+                'site_id' => true,
+            ),
         );
+    }
+
+    /**
+     * Expected issuer is the configured Access Platform URL.
+     */
+    private function get_expected_issuer() {
+        $issuer = $this->normalize_url_claim($this->platform_url);
+        $issuer = apply_filters('access_sso_expected_jwt_issuer', $issuer, $this->platform_url);
+        return $this->normalize_url_claim($issuer);
+    }
+
+    /**
+     * Expected audience defaults to the canonical Access site ID.
+     */
+    private function get_expected_audiences() {
+        $audiences = array_filter(array($this->site_id));
+        $audiences = apply_filters('access_sso_expected_jwt_audiences', $audiences, $this->site_id);
+
+        if (!is_array($audiences)) {
+            $audiences = array($audiences);
+        }
+
+        return array_values(array_filter(array_map('strval', $audiences)));
+    }
+
+    /**
+     * Match string or array JWT audiences.
+     */
+    private function audience_matches($token_audience, $expected_audiences) {
+        if (empty($expected_audiences)) {
+            return false;
+        }
+
+        $token_audiences = is_array($token_audience) ? $token_audience : array($token_audience);
+        $token_audiences = array_map('strval', $token_audiences);
+
+        foreach ($expected_audiences as $expected_audience) {
+            if (in_array((string) $expected_audience, $token_audiences, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function normalize_url_claim($value) {
+        $value = trim((string) $value);
+        if (empty($value)) {
+            return '';
+        }
+
+        return untrailingslashit($value);
     }
     
     /**
@@ -195,6 +264,8 @@ class AccessSSO_JWT_Validator {
         );
         
         $payload = array_merge($user_data, array(
+            'iss' => $this->get_expected_issuer(),
+            'aud' => $this->site_id,
             'iat' => time(),
             'exp' => time() + (15 * 60), // 15 minutes
             'site_id' => $this->site_id,
