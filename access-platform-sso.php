@@ -266,6 +266,20 @@ class AccessPlatformSSO {
             ? $user_data['verified']
             : array();
         unset($provisioning_claims['impersonation']);
+
+        $access_role = isset($provisioning_claims['access_role']) ? strtolower((string) $provisioning_claims['access_role']) : '';
+        $role = isset($provisioning_claims['role']) ? strtolower((string) $provisioning_claims['role']) : '';
+        $subscription_status = isset($provisioning_claims['subscription_status']) ? strtolower((string) $provisioning_claims['subscription_status']) : '';
+        $is_admin_claim = (
+            (isset($provisioning_claims['is_admin']) && true === $provisioning_claims['is_admin']) ||
+            'admin' === $access_role ||
+            'administrator' === $role
+        );
+
+        if (!$is_admin_claim && 'active' !== $subscription_status) {
+            status_header(403);
+            wp_die(__('SSO authentication failed: active subscription required.', 'access-platform-sso'));
+        }
         
         // Log the SSO attempt for debugging
         $sso_email = isset($provisioning_claims['email']) ? $provisioning_claims['email'] : 'unknown';

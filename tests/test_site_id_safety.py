@@ -155,6 +155,17 @@ class SiteIdSafetyTests(unittest.TestCase):
         self.assertLess(provisioning_position, final_redirect_position)
         self.assertIn("$provisioning_claims['_access_sso_validation']", source)
 
+    def test_sso_callback_requires_active_subscription_for_non_admins(self):
+        source = read(MAIN_PLUGIN)
+
+        guard_position = source.index("'active' !== $subscription_status")
+        provisioning_position = source.index("$wp_user = $user_provisioner->provision_user($provisioning_claims)")
+
+        self.assertLess(guard_position, provisioning_position)
+        self.assertIn("$subscription_status", source)
+        self.assertIn("$is_admin_claim", source)
+        self.assertIn("active subscription required", source)
+
 
 if __name__ == "__main__":
     unittest.main()
