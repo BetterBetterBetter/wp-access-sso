@@ -19,8 +19,9 @@ debug.log
 *.tmp
 *.bak
 *~
+__pycache__/
+*.pyc
 
 # Composer (if you add it later)
 /vendor/
 composer.lock
-
