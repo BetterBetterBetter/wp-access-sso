@@ -3,7 +3,7 @@
  * Plugin Name: Access Platform SSO
  * Plugin URI: https://github.com/BetterBetterBetter/wp-access-sso
  * Description: Single Sign-On integration with Access Platform (Supabase Auth)
- * Version: 1.1.8
+ * Version: 1.1.9
  * Author: Access Platform Team
  * License: GPL v2 or later
  * Text Domain: access-platform-sso
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ACCESS_SSO_VERSION', '1.1.8');
+define('ACCESS_SSO_VERSION', '1.1.9');
 define('ACCESS_SSO_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ACCESS_SSO_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -43,6 +43,10 @@ class AccessPlatformSSO {
     const IMPERSONATION_COOKIE = 'access_sso_impersonation';
     const IMPERSONATION_TRANSIENT_PREFIX = 'access_sso_impersonation_';
     const IMPERSONATION_TTL = 86400;
+    const STATE_COOKIE = 'access_sso_state';
+    const STATE_TRANSIENT_PREFIX = 'access_sso_state_';
+    const STATE_TTL = 600;
+    const RATE_LIMIT_PREFIX = 'access_sso_rate_';
     
     private static $instance = null;
     private $admin_settings = null;
@@ -56,11 +60,16 @@ class AccessPlatformSSO {
     }
     
     private function __construct() {
+        add_action('init', array($this, 'mark_auth_request_uncacheable'), 0);
         add_action('init', array($this, 'init'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('admin_enqueue_scripts', array($this, 'admin_enqueue_scripts'));
+        add_filter('rocket_cache_reject_uri', array($this, 'exclude_auth_routes_from_wp_rocket'), 10, 2);
+        add_filter('rocket_cache_reject_cookies', array($this, 'exclude_auth_cookies_from_wp_rocket'));
         
         // SSO Authentication hooks
+        add_action('admin_post_nopriv_access_sso_start', array($this, 'handle_sso_start'));
+        add_action('admin_post_access_sso_start', array($this, 'handle_sso_start'));
         add_action('init', array($this, 'handle_sso_callback'));
         add_action('init', array($this, 'handle_impersonation_exit'));
         add_action('wp_login', array($this, 'handle_wp_login'), 10, 2);
@@ -82,6 +91,46 @@ class AccessPlatformSSO {
     public function init() {
         // Load text domain for translations
         load_plugin_textdomain('access-platform-sso', false, dirname(plugin_basename(__FILE__)) . '/languages');
+        AccessSSO_Session_Manager::migrate_legacy_storage();
+    }
+
+    /**
+     * Prevent page caches from serving or storing authentication transactions.
+     */
+    public function mark_auth_request_uncacheable() {
+        $action = isset($_GET['action']) && is_scalar($_GET['action'])
+            ? sanitize_key(wp_unslash($_GET['action']))
+            : '';
+        $is_auth_request = in_array($action, array('access_sso_start'), true)
+            || (isset($_GET['access_sso_callback']) && '1' === (string) wp_unslash($_GET['access_sso_callback']))
+            || (isset($_GET['access_sso_exit_impersonation']) && '1' === (string) wp_unslash($_GET['access_sso_exit_impersonation']));
+
+        if ($is_auth_request && !defined('DONOTCACHEPAGE')) {
+            define('DONOTCACHEPAGE', true);
+        }
+    }
+
+    /**
+     * Add durable WP Rocket exclusions. Query-string callbacks are already
+     * uncacheable; a configured callback path can also be excluded explicitly.
+     */
+    public function exclude_auth_routes_from_wp_rocket($uris) {
+        $uris = is_array($uris) ? $uris : array();
+        $uris[] = '/wp-admin/admin-post\\.php';
+
+        $callback_path = trim((string) $this->get_option('callback_path', ''), '/');
+        if ($callback_path !== '') {
+            $uris[] = '/' . preg_quote($callback_path, '/') . '/?$';
+        }
+
+        return array_values(array_unique($uris));
+    }
+
+    public function exclude_auth_cookies_from_wp_rocket($cookies) {
+        $cookies = is_array($cookies) ? $cookies : array();
+        $cookies[] = self::STATE_COOKIE;
+        $cookies[] = self::IMPERSONATION_COOKIE;
+        return array_values(array_unique($cookies));
     }
     
     public function enqueue_scripts() {
@@ -111,21 +160,9 @@ class AccessPlatformSSO {
 
         $this->enqueue_impersonation_banner_styles();
         
-        // Localize script with settings
-        wp_localize_script('access-sso-frontend', 'accessSSO', array(
-            'ajaxurl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('access_sso_nonce'),
-            'platform_url' => $this->get_option('platform_url', ''),
-            'site_id' => $this->get_option('site_id', ''),
-        ));
-        
         // Configuration for login form detector
         $detector_config = array(
-            'platform_url' => $this->get_option('platform_url', ''),
-            'site_id' => $this->get_option('site_id', ''),
-            'callback_url' => $this->get_callback_url(),
-            'ajaxurl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('access_sso_nonce'),
+            'login_url' => $this->get_login_url(),
             'button_text' => $this->get_option('button_text', 'Login with Access Platform'),
             'divider_text' => $this->get_option('divider_text', 'or'),
             'disabled' => $this->get_option('detector_disabled', '0') === '1',
@@ -205,101 +242,100 @@ class AccessPlatformSSO {
         // Localize script with admin data
         wp_localize_script('access-sso-admin', 'accessSSOAdmin', array(
             'ajaxurl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('access_sso_nonce'),
+            'test_connection_nonce' => wp_create_nonce('access_sso_test_connection_nonce'),
+            'health_check_nonce' => wp_create_nonce('access_sso_health_check_nonce'),
             'platform_url' => $this->get_option('platform_url', ''),
             'site_id' => $this->get_option('site_id', ''),
         ));
     }
     
+    public function handle_sso_start() {
+        $this->send_auth_response_headers();
+        $this->enforce_rate_limit('start', 20, 5 * MINUTE_IN_SECONDS);
+
+        $platform_url = $this->get_option('platform_url', '');
+        $site_id = $this->get_option('site_id', '');
+        if (empty($platform_url) || empty($site_id)) {
+            wp_die(__('SSO is not configured for this site.', 'access-platform-sso'), '', array('response' => 503));
+        }
+
+        $default_redirect = $this->get_safe_redirect_url($this->get_option('redirect_url', home_url()));
+        $requested_redirect = isset($_GET['return_to']) ? wp_unslash($_GET['return_to']) : '';
+        $redirect_url = $this->get_safe_redirect_url($requested_redirect, $default_redirect);
+        $state = $this->create_login_state($redirect_url);
+        $callback_url = add_query_arg('state', $state, $this->get_callback_url());
+        $sso_url = $this->build_platform_login_url($callback_url);
+
+        wp_redirect($sso_url, 302, 'Access Platform SSO');
+        exit;
+    }
+
     public function handle_sso_callback() {
-        if (!isset($_GET['access_sso_callback']) || $_GET['access_sso_callback'] !== '1') {
+        if (!isset($_GET['access_sso_callback']) || '1' !== wp_unslash($_GET['access_sso_callback'])) {
             return;
         }
-        
-        // Compute desired redirect URL early
-        $default_redirect = $this->get_option('redirect_url', home_url());
-        $redirect_url = isset($_GET['redirect_to']) ? esc_url_raw($_GET['redirect_to']) : (
-            isset($_GET['return_to']) ? esc_url_raw($_GET['return_to']) : (
-                isset($_GET['callback']) ? esc_url_raw($_GET['callback']) : (
-                    isset($_GET['redirect_url']) ? esc_url_raw($_GET['redirect_url']) : $default_redirect
-                )
-            )
-        );
 
-        // Nonce is best-effort: proceed if token is present and valid
-        // Get JWT token from query parameter (do not sanitize; preserve signature-critical chars)
-        $jwt_token = isset($_GET['token']) ? rawurldecode(wp_unslash($_GET['token'])) : '';
-        
-        if (empty($jwt_token)) {
-            // Existing logged-in callback hits without a token are just redirects.
-            wp_safe_redirect(!empty($redirect_url) ? $redirect_url : home_url());
-            exit;
+        $this->send_auth_response_headers();
+        $this->enforce_rate_limit('callback', 30, 5 * MINUTE_IN_SECONDS);
+
+        $default_redirect = $this->get_safe_redirect_url($this->get_option('redirect_url', home_url()));
+        $redirect_url = $default_redirect;
+        $state = isset($_GET['state']) ? sanitize_text_field(wp_unslash($_GET['state'])) : '';
+
+        if (!empty($state)) {
+            $state_context = $this->consume_login_state($state);
+            if (!is_array($state_context)) {
+                wp_die(__('This sign-in request has expired or was already used. Please start again.', 'access-platform-sso'), '', array('response' => 400));
+            }
+
+            $redirect_url = $this->get_safe_redirect_url(
+                isset($state_context['redirect_to']) ? $state_context['redirect_to'] : '',
+                $default_redirect
+            );
         }
-        
-        // Validate JWT token
+
+        // Preserve the JWT exactly as received because every character is signature-critical.
+        $jwt_token = isset($_GET['token']) ? rawurldecode(wp_unslash($_GET['token'])) : '';
+        if (empty($jwt_token)) {
+            wp_die(__('The SSO response did not include an authentication token.', 'access-platform-sso'), '', array('response' => 400));
+        }
+
         $jwt_validator = new AccessSSO_JWT_Validator();
         $user_data = $jwt_validator->validate_token($jwt_token);
-        
-        if (!$user_data || !$user_data['valid']) {
-            $error_msg = isset($user_data['error']) ? $user_data['error'] : 'Invalid token';
-            status_header(401);
-            wp_die(__('SSO authentication failed: ', 'access-platform-sso') . $error_msg);
+        if (!$user_data || empty($user_data['valid']) || empty($user_data['user']) || !is_array($user_data['user'])) {
+            wp_die(__('SSO authentication failed. Please start the sign-in again.', 'access-platform-sso'), '', array('response' => 401));
         }
-        
-        // Provision or update WordPress user
-        $user_provisioner = new AccessSSO_User_Provisioner();
-        // Accept either nested user object or flat JWT claims
-        $claims = isset($user_data['user']) && is_array($user_data['user']) ? $user_data['user'] : $user_data['user'];
-        if (!is_array($claims)) {
-            $claims = $user_data['user'] ?? array();
+
+        $claims = $user_data['user'];
+        $expires_at = isset($claims['exp']) ? (int) $claims['exp'] : 0;
+        if (!$jwt_validator->consume_token_once($jwt_token, $expires_at)) {
+            wp_die(__('This SSO response has expired or was already used. Please start again.', 'access-platform-sso'), '', array('response' => 401));
         }
-        if (empty($claims) && isset($user_data['header']) && isset($user_data['user'])) {
-            $claims = $user_data['user'];
-        }
-        if (empty($claims) && isset($user_data['sub'])) {
-            $claims = $user_data;
+        $user_data['verified']['replay'] = true;
+
+        // Stateless callbacks are retained only for Access-initiated dashboard launches.
+        // WordPress login buttons always use the browser-bound state flow above.
+        if (empty($state) && !$this->is_valid_stateless_handoff($claims)) {
+            wp_die(__('This sign-in request is missing its security state. Please start again.', 'access-platform-sso'), '', array('response' => 400));
         }
 
         $impersonation_context = $this->extract_impersonation_context($claims);
         $provisioning_claims = $claims;
-        $provisioning_claims['_access_sso_validation'] = isset($user_data['verified']) && is_array($user_data['verified'])
-            ? $user_data['verified']
-            : array();
+        $provisioning_claims['_access_sso_validation'] = $user_data['verified'];
         unset($provisioning_claims['impersonation']);
 
-        $access_role = isset($provisioning_claims['access_role']) ? strtolower((string) $provisioning_claims['access_role']) : '';
-        $role = isset($provisioning_claims['role']) ? strtolower((string) $provisioning_claims['role']) : '';
-        $subscription_status = isset($provisioning_claims['subscription_status']) ? strtolower((string) $provisioning_claims['subscription_status']) : '';
-        $is_admin_claim = (
-            (isset($provisioning_claims['is_admin']) && true === $provisioning_claims['is_admin']) ||
-            'admin' === $access_role ||
-            'administrator' === $role
-        );
-
-        if (!$is_admin_claim && 'active' !== $subscription_status) {
-            status_header(403);
-            wp_die(__('SSO authentication failed: active subscription required.', 'access-platform-sso'));
-        }
-        
-        // Log the SSO attempt for debugging
-        $sso_email = isset($provisioning_claims['email']) ? $provisioning_claims['email'] : 'unknown';
-        $sso_sub = isset($provisioning_claims['sub']) ? $provisioning_claims['sub'] : (isset($provisioning_claims['id']) ? $provisioning_claims['id'] : 'unknown');
-        error_log('[Access SSO] Provisioning user - email: ' . $sso_email . ', sub: ' . $sso_sub);
-        
+        // Access authenticates identity. WordPress and MemberPress remain the only
+        // source of roles, membership rules, and course authorization.
+        $user_provisioner = new AccessSSO_User_Provisioner();
         $wp_user = $user_provisioner->provision_user($provisioning_claims);
-        
         if (is_wp_error($wp_user)) {
-            error_log('[Access SSO] User provisioning failed - email: ' . $sso_email . ', error: ' . $wp_user->get_error_message());
-            wp_die(__('Failed to create user account: ', 'access-platform-sso') . $wp_user->get_error_message());
+            error_log('[Access SSO] User provisioning failed with code: ' . sanitize_key($wp_user->get_error_code()));
+            wp_die(__('We could not finish signing you in. Please try again or contact support.', 'access-platform-sso'), '', array('response' => 500));
         }
-        
-        error_log('[Access SSO] User provisioned successfully - email: ' . $sso_email . ', WP user ID: ' . $wp_user->ID);
-        
-        // Log in the user
-        wp_set_auth_cookie($wp_user->ID, true);
+
+        wp_set_auth_cookie($wp_user->ID, true, is_ssl());
         wp_set_current_user($wp_user->ID);
-        
-        // Create SSO session
+
         $session_manager = new AccessSSO_Session_Manager();
         $session_manager->create_sso_session($wp_user->ID, $user_data);
 
@@ -308,12 +344,7 @@ class AccessPlatformSSO {
         } else {
             $this->clear_impersonation_context();
         }
-        
-        // Ensure we have a valid URL
-        if (empty($redirect_url)) {
-            $redirect_url = home_url();
-        }
-        
+
         wp_safe_redirect($redirect_url);
         exit;
     }
@@ -325,7 +356,7 @@ class AccessPlatformSSO {
 
         $nonce = isset($_GET['nonce']) ? sanitize_text_field(wp_unslash($_GET['nonce'])) : '';
         if (!wp_verify_nonce($nonce, 'access_sso_exit_impersonation')) {
-            wp_die(__('Invalid impersonation exit request.', 'access-platform-sso'));
+            wp_die(__('Invalid impersonation exit request.', 'access-platform-sso'), '', array('response' => 403));
         }
 
         $context = $this->get_impersonation_context();
@@ -354,19 +385,8 @@ class AccessPlatformSSO {
             return;
         }
         
-        $callback_url = $this->get_callback_url();
-        $redirect_to_param = isset($_GET['redirect_to']) ? $_GET['redirect_to'] : '';
-        
-        // Add redirect_to to callback URL if specified
-        if (!empty($redirect_to_param)) {
-            $callback_url .= '&redirect_to=' . urlencode($redirect_to_param);
-        }
-        
-        $sso_url = $platform_url . '/login?site_id=' . urlencode($site_id) .
-                   '&callback=' . urlencode($callback_url) .
-                   '&redirect_to=' . urlencode($callback_url) .
-                   '&return_to=' . urlencode($callback_url) .
-                   '&redirect_url=' . urlencode($callback_url);
+        $redirect_to_param = isset($_GET['redirect_to']) ? wp_unslash($_GET['redirect_to']) : '';
+        $sso_url = $this->get_login_url($redirect_to_param);
         
         echo '<div class="access-sso-login-wrapper">';
         echo '<a href="' . esc_url($sso_url) . '" class="button button-large access-sso-login-button">';
@@ -535,7 +555,198 @@ class AccessPlatformSSO {
             $base_url = home_url('/');
         }
         
-        return $base_url . '?access_sso_callback=1&nonce=' . wp_create_nonce('access_sso_callback');
+        return add_query_arg('access_sso_callback', '1', $base_url);
+    }
+
+    /**
+     * Return the uncached WordPress endpoint that creates browser-bound SSO state.
+     */
+    public function get_login_url($redirect_to = '') {
+        $url = add_query_arg(
+            array(
+                'action' => 'access_sso_start',
+            ),
+            admin_url('admin-post.php')
+        );
+
+        if (!empty($redirect_to)) {
+            $url = add_query_arg('return_to', $this->get_safe_redirect_url($redirect_to), $url);
+        }
+
+        return $url;
+    }
+
+    private function build_platform_login_url($callback_url) {
+        $platform_url = esc_url_raw($this->get_option('platform_url', ''), array('http', 'https'));
+        $site_id = sanitize_text_field($this->get_option('site_id', ''));
+        $scheme = strtolower((string) wp_parse_url($platform_url, PHP_URL_SCHEME));
+        $host = wp_parse_url($platform_url, PHP_URL_HOST);
+
+        if (empty($host) || !in_array($scheme, array('http', 'https'), true)) {
+            wp_die(__('The Access Platform URL is not configured safely.', 'access-platform-sso'), '', array('response' => 503));
+        }
+
+        $query = http_build_query(
+            array(
+                'site_id' => $site_id,
+                'callback' => $callback_url,
+                'redirect_to' => $callback_url,
+                'return_to' => $callback_url,
+                'redirect_url' => $callback_url,
+            ),
+            '',
+            '&',
+            PHP_QUERY_RFC3986
+        );
+
+        return trailingslashit($platform_url) . 'login?' . $query;
+    }
+
+    private function create_login_state($redirect_url) {
+        try {
+            $state = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
+        } catch (Exception $e) {
+            $state = wp_generate_password(43, false, false);
+        }
+
+        set_transient(
+            self::STATE_TRANSIENT_PREFIX . hash('sha256', $state),
+            array(
+                'created_at' => time(),
+                'redirect_to' => $this->get_safe_redirect_url($redirect_url),
+            ),
+            self::STATE_TTL
+        );
+        $this->set_login_state_cookie($state, time() + self::STATE_TTL);
+
+        return $state;
+    }
+
+    private function consume_login_state($state) {
+        if (!preg_match('/^[A-Za-z0-9_-]{32,128}$/', (string) $state)) {
+            return false;
+        }
+
+        $cookie_state = isset($_COOKIE[self::STATE_COOKIE])
+            ? sanitize_text_field(wp_unslash($_COOKIE[self::STATE_COOKIE]))
+            : '';
+        if (empty($cookie_state) || !hash_equals($cookie_state, (string) $state)) {
+            return false;
+        }
+
+        $transient_key = self::STATE_TRANSIENT_PREFIX . hash('sha256', $state);
+        $context = get_transient($transient_key);
+        delete_transient($transient_key);
+        $this->set_login_state_cookie('', time() - self::STATE_TTL);
+        unset($_COOKIE[self::STATE_COOKIE]);
+
+        if (!is_array($context) || empty($context['created_at']) || (time() - (int) $context['created_at']) > self::STATE_TTL) {
+            return false;
+        }
+
+        return $context;
+    }
+
+    private function set_login_state_cookie($value, $expiration) {
+        if (headers_sent()) {
+            return;
+        }
+
+        $cookie_path = defined('COOKIEPATH') && COOKIEPATH ? COOKIEPATH : '/';
+        $cookie_domain = defined('COOKIE_DOMAIN') ? COOKIE_DOMAIN : '';
+
+        if (PHP_VERSION_ID >= 70300) {
+            setcookie(self::STATE_COOKIE, $value, array(
+                'expires' => $expiration,
+                'path' => $cookie_path,
+                'domain' => $cookie_domain,
+                'secure' => is_ssl(),
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ));
+        } else {
+            setcookie(
+                self::STATE_COOKIE,
+                $value,
+                $expiration,
+                $cookie_path . '; samesite=Lax',
+                $cookie_domain,
+                is_ssl(),
+                true
+            );
+        }
+
+        if ($expiration > time() && !empty($value)) {
+            $_COOKIE[self::STATE_COOKIE] = $value;
+        }
+    }
+
+    private function is_valid_stateless_handoff($claims) {
+        if (empty($claims['redirect_url']) || !is_string($claims['redirect_url'])) {
+            return false;
+        }
+
+        $signed_redirect = esc_url_raw($claims['redirect_url'], array('http', 'https'));
+        $expected_host = strtolower((string) wp_parse_url(home_url(), PHP_URL_HOST));
+        $signed_host = strtolower((string) wp_parse_url($signed_redirect, PHP_URL_HOST));
+        if (empty($expected_host) || !hash_equals($expected_host, $signed_host)) {
+            return false;
+        }
+
+        $query = wp_parse_url($signed_redirect, PHP_URL_QUERY);
+        parse_str((string) $query, $query_args);
+
+        return isset($query_args['access_sso_callback']) && '1' === (string) $query_args['access_sso_callback'];
+    }
+
+    private function get_safe_redirect_url($requested_url, $fallback = '') {
+        $home_host = strtolower((string) wp_parse_url(home_url(), PHP_URL_HOST));
+        $fallback = !empty($fallback) ? esc_url_raw($fallback, array('http', 'https')) : home_url();
+        $fallback_host = strtolower((string) wp_parse_url($fallback, PHP_URL_HOST));
+        if (empty($fallback) || (!empty($fallback_host) && !hash_equals($home_host, $fallback_host))) {
+            $fallback = home_url();
+        }
+
+        if (empty($requested_url)) {
+            return $fallback;
+        }
+
+        $requested_url = esc_url_raw($requested_url, array('http', 'https'));
+        $validated = wp_validate_redirect($requested_url, $fallback);
+        if (empty($validated)) {
+            return $fallback;
+        }
+
+        $redirect_host = strtolower((string) wp_parse_url($validated, PHP_URL_HOST));
+
+        if (!empty($redirect_host) && !hash_equals($home_host, $redirect_host)) {
+            return home_url();
+        }
+
+        return $validated;
+    }
+
+    private function send_auth_response_headers() {
+        nocache_headers();
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0', true);
+        header('Pragma: no-cache', true);
+        header('Referrer-Policy: no-referrer', true);
+        header('X-Content-Type-Options: nosniff', true);
+        header('X-Robots-Tag: noindex, nofollow, noarchive', true);
+    }
+
+    private function enforce_rate_limit($bucket, $limit, $window) {
+        $remote_address = isset($_SERVER['REMOTE_ADDR']) ? (string) $_SERVER['REMOTE_ADDR'] : 'unknown';
+        $fingerprint = hash_hmac('sha256', $remote_address, wp_salt('auth'));
+        $key = self::RATE_LIMIT_PREFIX . sanitize_key($bucket) . '_' . $fingerprint;
+        $attempts = (int) get_transient($key);
+
+        if ($attempts >= (int) $limit) {
+            header('Retry-After: ' . (int) $window, true);
+            wp_die(__('Too many sign-in attempts. Please wait a few minutes and try again.', 'access-platform-sso'), '', array('response' => 429));
+        }
+
+        set_transient($key, $attempts + 1, (int) $window);
     }
     
     public function get_option($key, $default = '') {
@@ -1229,7 +1440,7 @@ register_deactivation_hook(__FILE__, array('AccessPlatformSSO', 'deactivate'));
 // AJAX handlers for admin
 add_action('wp_ajax_access_sso_test_connection', 'access_sso_test_connection');
 function access_sso_test_connection() {
-    if (!access_sso_verify_ajax_nonce()) {
+    if (!access_sso_verify_ajax_nonce('access_sso_test_connection_nonce')) {
         wp_send_json_error(array('message' => __('Security check failed', 'access-platform-sso')));
     }
     
@@ -1331,7 +1542,7 @@ function access_sso_test_connection() {
 // Health check handler used for background status polling in admin UI
 add_action('wp_ajax_access_sso_health_check', 'access_sso_health_check');
 function access_sso_health_check() {
-    if (!access_sso_verify_ajax_nonce()) {
+    if (!access_sso_verify_ajax_nonce('access_sso_health_check_nonce')) {
         wp_send_json_error(array('message' => __('Security check failed', 'access-platform-sso')));
     }
 
@@ -1377,23 +1588,10 @@ function access_sso_health_check() {
     wp_send_json_error(array('message' => __('Health check failed with status code: ', 'access-platform-sso') . $status_code));
 }
 
-// Helper: verify AJAX nonce from common parameter names without dying
-function access_sso_verify_ajax_nonce() {
-    $nonce = isset($_REQUEST['nonce']) ? $_REQUEST['nonce'] : '';
-    if (!$nonce && isset($_REQUEST['security'])) {
-        $nonce = $_REQUEST['security'];
-    }
-    if (!$nonce && isset($_REQUEST['_ajax_nonce'])) {
-        $nonce = $_REQUEST['_ajax_nonce'];
-    }
-    if ($nonce && wp_verify_nonce($nonce, 'access_sso_nonce')) {
-        return true;
-    }
-    // Fallback: allow logged-in admins even if nonce is missing/invalid (mitigates cache/WAF issues)
-    if (is_user_logged_in() && current_user_can('manage_options')) {
-        return true;
-    }
-    return false;
+// Verify the one intended nonce for each administrative action.
+function access_sso_verify_ajax_nonce($action) {
+    $nonce = isset($_POST['nonce']) ? sanitize_text_field(wp_unslash($_POST['nonce'])) : '';
+    return !empty($nonce) && wp_verify_nonce($nonce, $action);
 }
 
 // (Removed non-core admin AJAX endpoints to keep plugin focused on SSO connection)

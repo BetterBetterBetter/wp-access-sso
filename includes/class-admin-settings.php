@@ -119,6 +119,10 @@ class AccessSSO_Admin_Settings {
                 $args['sanitize_callback'] = array($this, 'sanitize_site_id');
             }
 
+            if ($setting === 'jwt_secret') {
+                $args['sanitize_callback'] = array($this, 'sanitize_jwt_secret');
+            }
+
             register_setting($this->options_group, 'access_sso_' . $setting, $args);
         }
     }
@@ -176,8 +180,7 @@ class AccessSSO_Admin_Settings {
         $site_id = AccessPlatformSSO::get_instance()->get_option('site_id', '');
         
         if (!empty($platform_url) && !empty($site_id)) {
-            $callback_url = AccessPlatformSSO::get_instance()->get_callback_url();
-            $sso_url = $platform_url . '/login?site_id=' . urlencode($site_id) . '&redirect_to=' . urlencode($callback_url);
+            $sso_url = AccessPlatformSSO::get_instance()->get_login_url();
             
             echo '<div class="notice notice-info inline" style="margin: 10px 0; padding: 10px;">';
             echo '<p><strong>' . __('Test SSO URL:', 'access-platform-sso') . '</strong></p>';
@@ -225,14 +228,24 @@ class AccessSSO_Admin_Settings {
     }
     
     public function jwt_secret_callback() {
-        $value = AccessPlatformSSO::get_instance()->get_option('jwt_secret', '');
+        $is_configured = '' !== AccessPlatformSSO::get_instance()->get_option('jwt_secret', '');
         
         echo '<div class="jwt-secret-field-wrapper">';
-        echo '<input type="password" name="access_sso_jwt_secret" id="access_sso_jwt_secret" value="' . esc_attr($value) . '" class="regular-text">';
+        echo '<input type="password" name="access_sso_jwt_secret" id="access_sso_jwt_secret" value="" class="regular-text" autocomplete="new-password" placeholder="' . esc_attr($is_configured ? __('Configured — enter a new value only to rotate', 'access-platform-sso') : __('Not configured', 'access-platform-sso')) . '">';
         echo '<button type="button" class="button" id="toggle-secret-visibility">' . __('Show', 'access-platform-sso') . '</button>';
         echo '<button type="button" class="button" id="generate-secret">' . __('Generate New Secret', 'access-platform-sso') . '</button>';
         echo '</div>';
-        echo '<p class="description">' . __('Secret key for JWT token validation. Must match the secret in your Access Platform.', 'access-platform-sso') . '</p>';
+        echo '<p class="description">' . __('The stored secret is never displayed. Leave this blank to keep it unchanged; enter a new value only when rotating it in both WordPress and Access.', 'access-platform-sso') . '</p>';
+    }
+
+    public function sanitize_jwt_secret($value) {
+        $value = is_string($value) ? sanitize_text_field(wp_unslash($value)) : '';
+
+        if ('' === $value) {
+            return AccessPlatformSSO::get_instance()->get_option('jwt_secret', '');
+        }
+
+        return $value;
     }
     
     public function callback_path_callback() {

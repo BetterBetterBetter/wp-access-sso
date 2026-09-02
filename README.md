@@ -5,10 +5,10 @@ A comprehensive Single Sign-On (SSO) plugin that integrates WordPress sites with
 ## Features
 
 - **JWT-based Authentication**: Secure token-based authentication using your existing Supabase infrastructure
-- **Auto User Provisioning**: Automatically creates WordPress users from Access Platform data
-- **Role Mapping**: Flexible mapping between Access Platform roles and WordPress roles
-- **Session Management**: Cross-site session tracking and management
-- **Security Features**: Comprehensive logging, suspicious activity detection, and admin tools
+- **Safe User Provisioning**: Creates WordPress users without allowing external claims to grant or change privileged WordPress roles
+- **Authorization Separation**: Access proves identity; WordPress and plugins such as MemberPress remain the source of roles and permissions
+- **Session Management**: Tracks SSO sessions with tokens and request fingerprints hashed at rest
+- **Security Features**: Browser-bound login state, single-use short-lived JWTs, rate limiting, and redacted diagnostics
 - **Professional Admin Interface**: Easy-to-use configuration and monitoring dashboard
 - **Login Form Detection**: Automatically detects and enhances login forms from MemberPress, LearnDash, WooCommerce, and more
 
@@ -23,19 +23,15 @@ A comprehensive Single Sign-On (SSO) plugin that integrates WordPress sites with
 ### Required Settings
 
 1. **Access Platform URL**: The URL of your Access Platform (e.g., `https://your-platform.com`)
-2. **Site ID**: Automatically generated unique identifier for this WordPress site  
+2. **Site ID**: The canonical site identifier copied from Access and verified against this WordPress host
 3. **JWT Secret Key**: Shared secret for JWT token validation (must match your Access Platform)
 
 ### Optional Settings
 
 - **Callback Path**: Path where SSO callback is processed. Use this if your homepage doesn't run WordPress code (e.g., static homepage). Set to `welcome` or `members` to use `/welcome/?access_sso_callback=1` instead.
 - **Post-Login Redirect URL**: Where to redirect users after successful SSO login
-- **Auto-Provision Users**: Automatically create WordPress users from SSO data
-- **Default User Role**: Default role for new users created via SSO
-- **Role Mapping**: JSON configuration for mapping Access Platform roles to WordPress roles
-- **Global Logout**: Redirect to Access Platform on logout for cross-site logout
-- **Admin Bypass**: Allow administrators to bypass SSO and login normally
-- **Enable Logging**: Detailed logging of SSO events for security monitoring
+- **Button and Form Detection Settings**: Control the injected login button and which form types are enhanced
+- **Excluded Routes**: Prevent automatic form detection where it is not wanted
 
 ### Sites with Static Homepages
 
@@ -124,7 +120,7 @@ window.accessSSODetector.custom_selectors = [
 This plugin works with your existing Access Platform JWT endpoint at `/api/sso/jwt`. The endpoint should:
 
 1. Generate JWT tokens for authenticated users
-2. Include user data (email, name, role, subscription status)
+2. Include user identity data and the required trust claims (`iss`, `aud`, `site_id`, `iat`, and `exp`)
 3. Sign tokens with the shared JWT secret
 4. Handle token validation requests
 
@@ -135,38 +131,30 @@ This plugin works with your existing Access Platform JWT endpoint at `/api/sso/j
   "id": "user-123",
   "email": "user@example.com",
   "name": "John Doe", 
-  "role": "premium_member",
-  "subscription_status": "ACTIVE",
-  "is_admin": false,
+  "first_name": "John",
+  "last_name": "Doe",
+  "iss": "https://access.example.com",
+  "aud": "wordpress-sso",
   "iat": 1640995200,
   "exp": 1640996100,
   "site_id": "wp-site-456"
 }
 ```
 
-## Role Mapping
+## Identity and Authorization Boundary
 
-Configure role mapping in the plugin settings using JSON format:
-
-```json
-{
-  "admin": "administrator",
-  "premium_member": "editor", 
-  "basic_member": "subscriber",
-  "active_subscriber": "subscriber",
-  "inactive_subscriber": "subscriber"
-}
-```
+Access authenticates the person and supplies signed identity claims. It does not grant WordPress roles, MemberPress memberships, course access, or administrator permissions. Existing WordPress users retain their local roles; new SSO users receive only the site's safe non-privileged default role (falling back to `subscriber`). Authorization remains in WordPress and MemberPress.
 
 ## Security Features
 
 - **JWT Signature Verification**: HMAC SHA256 validation
-- **Token Expiration**: Automatic token expiry handling
-- **Session Tracking**: Comprehensive session monitoring
-- **Suspicious Activity Detection**: Alerts for unusual login patterns
-- **Audit Logging**: Detailed logs of all SSO events
-- **IP Address Tracking**: Security monitoring by IP address
-- **Rate Limiting**: Protection against authentication abuse
+- **Bounded, Single-Use Tokens**: `iat` and `exp` are required, JWT lifetime is capped at 15 minutes, and callbacks cannot be replayed
+- **Browser-Bound State**: WordPress-started login uses a short-lived HttpOnly, Secure, SameSite=Lax state cookie
+- **Safe Redirects**: Post-login redirects are limited to the WordPress host and an empty setting falls back to the homepage
+- **Continuation-Aware Login Buttons**: Injected login buttons preserve WordPress and MemberPress `redirect_to` destinations, including OAuth authorization requests started by connected applications
+- **Private Session Storage**: Session tokens, Access IDs, IP addresses, and user agents are one-way hashed at rest
+- **Rate Limiting**: Application-level limits protect the login start and callback endpoints
+- **Cache Protection**: Authentication responses use `no-store`, mark requests `DONOTCACHEPAGE`, and register WP Rocket exclusions
 
 ## Database Tables
 
@@ -197,11 +185,11 @@ The plugin creates the following table:
 1. **Connection Failed**: Check that your Access Platform URL is correct and accessible
 2. **Invalid Token**: Ensure JWT secret matches between plugin and Access Platform
 3. **User Not Created**: Check that auto-provisioning is enabled
-4. **Login Loop**: Verify callback URL configuration and nonce validation
+4. **Login Loop**: Verify the callback URL, browser state cookie, and that cache/CDN rules bypass authentication endpoints
 
 ### Debug Mode
 
-Enable WordPress debug mode and check logs for detailed error information:
+Enable WordPress debug logging temporarily when diagnosing a development site. The plugin intentionally emits only generic/redacted authentication failures:
 
 ```php
 define('WP_DEBUG', true);
@@ -239,6 +227,14 @@ For support and bug reports, please contact your Access Platform administrator o
 This plugin is licensed under GPL v2 or later.
 
 ## Changelog
+
+### Version 1.1.9
+- Added browser-bound state for WordPress-started SSO and retained constrained signed compatibility for Access dashboard launches
+- Enforced 15-minute JWT lifetimes and one-time callback token consumption
+- Prevented Access claims from granting or changing WordPress roles
+- Hashed session tokens and request fingerprints at rest, including incremental legacy-data migration
+- Added strict admin nonces, application rate limits, safe local redirects, no-store responses, and WP Rocket exclusions
+- Removed the frontend processing splash and sensitive diagnostics
 
 ### Version 1.1.0
 - **NEW**: Login Form Detector - Automatically detects and enhances login forms

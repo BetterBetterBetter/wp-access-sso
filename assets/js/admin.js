@@ -32,11 +32,6 @@
             }
         });
         
-        // Validate role mapping JSON
-        $('textarea[name="access_sso_role_mapping"]').on('blur', function() {
-            validateRoleMapping($(this));
-        });
-        
         // Initialize connection status
         updateConnectionStatus();
         
@@ -74,9 +69,7 @@
             type: 'POST',
             data: {
                 action: 'access_sso_test_connection',
-                nonce: accessSSOAdmin.nonce,
-                security: accessSSOAdmin.nonce,
-                _ajax_nonce: accessSSOAdmin.nonce,
+                nonce: accessSSOAdmin.test_connection_nonce,
                 platform_url: platformUrl,
                 site_id: siteId
             },
@@ -106,8 +99,11 @@
         var $input = $('input[name="access_sso_jwt_secret"]');
         var $button = $('#generate-secret');
         
-        // Generate a random secret (64 characters)
         var secret = generateRandomString(64);
+        if (!secret) {
+            showNotice('Secure random generation is unavailable in this browser.', 'error');
+            return;
+        }
         
         $input.val(secret);
         $button.text('Generated!').addClass('button-primary');
@@ -133,10 +129,16 @@
     }
     
     function generateRandomString(length) {
-        var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
+        if (!window.crypto || typeof window.crypto.getRandomValues !== 'function') {
+            return '';
+        }
+
+        var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+        var bytes = new Uint8Array(length);
+        window.crypto.getRandomValues(bytes);
         var result = '';
         for (var i = 0; i < length; i++) {
-            result += chars.charAt(Math.floor(Math.random() * chars.length));
+            result += chars.charAt(bytes[i] & 63);
         }
         return result;
     }
@@ -149,27 +151,6 @@
         window.autoSaveTimeout = setTimeout(function() {
             $('#submit').trigger('click');
         }, 2000);
-    }
-    
-    function validateRoleMapping($textarea) {
-        var value = $textarea.val().trim();
-        
-        if (!value) {
-            return; // Empty is valid
-        }
-        
-        try {
-            var parsed = JSON.parse(value);
-            if (typeof parsed !== 'object' || Array.isArray(parsed)) {
-                throw new Error('Must be an object');
-            }
-            
-            $textarea.removeClass('error');
-            showNotice('Role mapping JSON is valid', 'success');
-        } catch (e) {
-            $textarea.addClass('error');
-            showNotice('Invalid JSON in role mapping: ' + e.message, 'error');
-        }
     }
     
     function updateConnectionStatus() {
@@ -188,9 +169,7 @@
             type: 'POST',
             data: {
                 action: 'access_sso_health_check',
-                nonce: accessSSOAdmin.nonce,
-                security: accessSSOAdmin.nonce,
-                _ajax_nonce: accessSSOAdmin.nonce
+                nonce: accessSSOAdmin.health_check_nonce
             },
             success: function(response) {
                 if (response.success) {
@@ -204,38 +183,6 @@
             error: function() {
                 $('#status-indicator').removeClass('connected testing').addClass('disconnected');
                 $('#status-text').text('Connection error');
-            }
-        });
-    }
-    
-    // Removed sessions modal UI
-    
-    // Removed logs modal UI
-    
-    function revokeSession(sessionToken) {
-        if (!confirm('Are you sure you want to revoke this session?')) {
-            return;
-        }
-        
-        $.ajax({
-            url: ajaxurl,
-            type: 'POST',
-            data: {
-                action: 'access_sso_revoke_session',
-                nonce: accessSSOAdmin.nonce,
-                session_token: sessionToken
-            },
-            success: function(response) {
-                if (response.success) {
-                    showNotice('Session revoked successfully', 'success');
-                    $('#sessions-modal').remove();
-                    viewActiveSessions(); // Refresh the modal
-                } else {
-                    showNotice(response.data.message || 'Failed to revoke session', 'error');
-                }
-            },
-            error: function(xhr, status, error) {
-                showNotice('AJAX error: ' + error, 'error');
             }
         });
     }

@@ -31,7 +31,12 @@ function access_sso_simple_admin_page() {
                 empty($submitted_site_id) ? 'Canonical Access site ID is missing.' : 'Site ID must be verified against Access.'
             );
         }
-        update_option('access_sso_jwt_secret', sanitize_text_field($_POST['jwt_secret']));
+        $submitted_jwt_secret = isset($_POST['jwt_secret'])
+            ? sanitize_text_field(wp_unslash($_POST['jwt_secret']))
+            : '';
+        if ('' !== $submitted_jwt_secret) {
+            update_option('access_sso_jwt_secret', $submitted_jwt_secret);
+        }
         update_option('access_sso_callback_path', sanitize_text_field($_POST['callback_path']));
         update_option('access_sso_auto_provision', isset($_POST['auto_provision']) ? '1' : '0');
         update_option('access_sso_default_role', sanitize_text_field($_POST['default_role']));
@@ -42,15 +47,11 @@ function access_sso_simple_admin_page() {
     // Get current values
     $platform_url = get_option('access_sso_platform_url', '');
     $site_id = get_option('access_sso_site_id', '');
-    $jwt_secret = get_option('access_sso_jwt_secret', wp_generate_password(64, false));
+    $jwt_secret_configured = '' !== get_option('access_sso_jwt_secret', '');
     $callback_path = get_option('access_sso_callback_path', '');
     $auto_provision = get_option('access_sso_auto_provision', '1');
     $default_role = get_option('access_sso_default_role', 'subscriber');
     
-    // Update non-identity defaults if empty. Site IDs must come from Access.
-    if (empty(get_option('access_sso_jwt_secret'))) {
-        update_option('access_sso_jwt_secret', $jwt_secret);
-    }
     ?>
     
     <div class="wrap">
@@ -60,7 +61,7 @@ function access_sso_simple_admin_page() {
             <h2>Quick Setup Guide</h2>
             <ol>
                 <li><strong>Platform URL:</strong> Enter your Access Platform URL (e.g., https://your-platform.com)</li>
-                <li><strong>JWT Secret:</strong> Use the generated secret (copy this to your Access Platform environment)</li>
+                <li><strong>JWT Secret:</strong> Leave blank to keep the configured secret, or explicitly rotate it in WordPress and Access together</li>
                 <li><strong>Test Connection:</strong> Click test to verify everything works</li>
                 <li><strong>Save Settings</strong></li>
             </ol>
@@ -99,13 +100,14 @@ function access_sso_simple_admin_page() {
                         <label for="jwt_secret">JWT Secret Key</label>
                     </th>
                     <td>
-                        <input type="text" id="jwt_secret" name="jwt_secret" 
-                               value="<?php echo esc_attr($jwt_secret); ?>" 
-                               class="large-text">
+                        <input type="password" id="jwt_secret" name="jwt_secret"
+                               value=""
+                               class="large-text" autocomplete="new-password"
+                               placeholder="<?php echo esc_attr($jwt_secret_configured ? 'Configured — enter a new value only to rotate' : 'Not configured'); ?>">
                         <br>
                         <button type="button" onclick="generateNewSecret()" class="button">Generate New Secret</button>
                         <p class="description">
-                            <strong>Important:</strong> Copy this secret to your Access Platform environment variable <code>SSO_JWT_SECRET</code>
+                            The stored secret is never displayed. A newly generated value must be saved here and in the Access Platform environment variable <code>SSO_JWT_SECRET</code> as one coordinated rotation.
                         </p>
                     </td>
                 </tr>
@@ -177,8 +179,7 @@ function access_sso_simple_admin_page() {
         
         <div style="background: #f0f0f1; padding: 20px; margin: 20px 0;">
             <h3>Environment Setup</h3>
-            <p>Add this to your Access Platform <code>.env.local</code> file:</p>
-            <pre style="background: #fff; padding: 10px; border: 1px solid #ccc;">SSO_JWT_SECRET=<?php echo esc_html($jwt_secret); ?></pre>
+            <p>The signing secret is intentionally not rendered into this page. Configure the same newly generated value in WordPress and Access only when performing a coordinated rotation.</p>
             
             <h3>Test SSO Flow</h3>
             <ol>
@@ -192,13 +193,21 @@ function access_sso_simple_admin_page() {
     
     <script>
     function generateNewSecret() {
-        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
-        let secret = '';
-        for (let i = 0; i < 64; i++) {
-            secret += chars.charAt(Math.floor(Math.random() * chars.length));
+        if (!window.crypto || typeof window.crypto.getRandomValues !== 'function') {
+            alert('Secure random generation is unavailable in this browser.');
+            return;
         }
+
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+        const bytes = new Uint8Array(64);
+        window.crypto.getRandomValues(bytes);
+        let secret = '';
+        for (let i = 0; i < bytes.length; i++) {
+            secret += chars.charAt(bytes[i] & 63);
+        }
+
         document.getElementById('jwt_secret').value = secret;
-        alert('New JWT secret generated! Make sure to save settings and update your Access Platform environment.');
+        alert('New JWT secret generated. Save it here and update Access as one coordinated rotation.');
     }
     
     function testConnection() {
