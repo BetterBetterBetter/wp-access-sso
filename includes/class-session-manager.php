@@ -9,12 +9,16 @@ if (!defined('ABSPATH')) {
 }
 
 class AccessSSO_Session_Manager {
+    const STORAGE_VERSION = 2;
+    const TOKEN_HASH_PREFIX = 'sha256:';
+    const PRIVACY_HASH_PREFIX = 'h:';
     
     private $table_name;
     
     public function __construct() {
         global $wpdb;
         $this->table_name = $wpdb->prefix . 'access_sso_sessions';
+        self::migrate_legacy_storage();
     }
     
     /**
@@ -24,6 +28,7 @@ class AccessSSO_Session_Manager {
         global $wpdb;
         
         $session_token = $this->generate_session_token();
+        $stored_session_token = $this->hash_session_token($session_token);
         $access_platform_id = '';
         if (is_array($user_data)) {
             if (isset($user_data['user']) && is_array($user_data['user']) && isset($user_data['user']['id'])) {
@@ -37,13 +42,13 @@ class AccessSSO_Session_Manager {
         
         $session_data = array(
             'user_id' => $user_id,
-            'session_token' => $session_token,
-            'access_platform_id' => $access_platform_id,
+            'session_token' => $stored_session_token,
+            'access_platform_id' => $this->privacy_hash($access_platform_id),
             'created_at' => current_time('mysql'),
             'expires_at' => date('Y-m-d H:i:s', time() + (24 * 60 * 60)), // 24 hours
             'last_activity' => current_time('mysql'),
-            'ip_address' => $this->get_client_ip(),
-            'user_agent' => isset($_SERVER['HTTP_USER_AGENT']) ? substr($_SERVER['HTTP_USER_AGENT'], 0, 255) : '',
+            'ip_address' => $this->privacy_hash($this->get_client_ip()),
+            'user_agent' => $this->privacy_hash(isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : ''),
             'is_active' => 1,
         );
         
@@ -58,7 +63,7 @@ class AccessSSO_Session_Manager {
         $this->cleanup_user_sessions($user_id);
         
         // Store session token in user meta for quick access
-        update_user_meta($user_id, 'access_sso_session_token', $session_token);
+        update_user_meta($user_id, 'access_sso_session_token', $stored_session_token);
         
         return $session_token;
     }
@@ -102,11 +107,12 @@ class AccessSSO_Session_Manager {
      */
     public function update_session_activity($session_token) {
         global $wpdb;
+        $stored_session_token = $this->hash_session_token($session_token);
         
         $wpdb->update(
             $this->table_name,
             array('last_activity' => current_time('mysql')),
-            array('session_token' => $session_token, 'is_active' => 1),
+            array('session_token' => $stored_session_token, 'is_active' => 1),
             array('%s'),
             array('%s', '%d')
         );
@@ -133,17 +139,18 @@ class AccessSSO_Session_Manager {
      */
     public function validate_session($session_token) {
         global $wpdb;
+        $stored_session_token = $this->hash_session_token($session_token);
         
         $session = $wpdb->get_row($wpdb->prepare(
             "SELECT * FROM {$this->table_name} 
              WHERE session_token = %s AND is_active = 1 
              AND expires_at > NOW()",
-            $session_token
+            $stored_session_token
         ));
         
         if ($session) {
             // Update last activity
-            $this->update_session_activity($session_token);
+            $this->update_session_activity($stored_session_token);
             return $session;
         }
         
@@ -157,21 +164,11 @@ class AccessSSO_Session_Manager {
         global $wpdb;
         
         // Mark expired sessions as inactive
-        $wpdb->update(
-            $this->table_name,
-            array('is_active' => 0),
-            array('expires_at' => array('value' => 'NOW()', 'operator' => '<')),
-            array('%d'),
-            array()
-        );
+        $wpdb->query("UPDATE {$this->table_name} SET is_active = 0 WHERE expires_at < NOW()");
         
         // Delete old inactive sessions (older than 30 days)
-        $wpdb->delete(
-            $this->table_name,
-            array(
-                'is_active' => 0,
-                'created_at' => array('value' => 'DATE_SUB(NOW(), INTERVAL 30 DAY)', 'operator' => '<')
-            )
+        $wpdb->query(
+            "DELETE FROM {$this->table_name} WHERE is_active = 0 AND created_at < DATE_SUB(NOW(), INTERVAL 30 DAY)"
         );
     }
     
@@ -208,6 +205,103 @@ class AccessSSO_Session_Manager {
      */
     private function generate_session_token() {
         return 'sso_' . wp_generate_password(32, false);
+    }
+
+    private function hash_session_token($session_token) {
+        $session_token = (string) $session_token;
+        if (self::is_hashed_session_token($session_token)) {
+            return $session_token;
+        }
+
+        return self::TOKEN_HASH_PREFIX . hash('sha256', $session_token);
+    }
+
+    private function privacy_hash($value) {
+        return self::privacy_hash_value($value);
+    }
+
+    private static function privacy_hash_value($value) {
+        $value = (string) $value;
+        if (empty($value) || self::is_privacy_hash($value)) {
+            return $value;
+        }
+
+        $digest = hash_hmac('sha256', $value, wp_salt('auth'), true);
+        return self::PRIVACY_HASH_PREFIX . rtrim(strtr(base64_encode($digest), '+/', '-_'), '=');
+    }
+
+    private static function hash_session_token_value($session_token) {
+        $session_token = (string) $session_token;
+        if (self::is_hashed_session_token($session_token)) {
+            return $session_token;
+        }
+
+        return self::TOKEN_HASH_PREFIX . hash('sha256', $session_token);
+    }
+
+    private static function is_hashed_session_token($value) {
+        return (bool) preg_match('/^sha256:[a-f0-9]{64}$/', (string) $value);
+    }
+
+    private static function is_privacy_hash($value) {
+        return (bool) preg_match('/^h:[A-Za-z0-9_-]{43}$/', (string) $value);
+    }
+
+    /**
+     * Incrementally hash tokens and request fingerprints written by older releases.
+     */
+    public static function migrate_legacy_storage() {
+        if ((int) get_option('access_sso_session_storage_version', 0) >= self::STORAGE_VERSION) {
+            return;
+        }
+
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'access_sso_sessions';
+        $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table_name));
+        if ($table_exists !== $table_name) {
+            return;
+        }
+
+        $rows = $wpdb->get_results(
+            "SELECT id, user_id, session_token, access_platform_id, ip_address, user_agent
+             FROM {$table_name}
+             WHERE session_token NOT REGEXP '^sha256:[a-f0-9]{64}$'
+                OR (access_platform_id <> '' AND access_platform_id NOT REGEXP '^h:[A-Za-z0-9_-]{43}$')
+                OR (ip_address <> '' AND ip_address NOT REGEXP '^h:[A-Za-z0-9_-]{43}$')
+                OR (user_agent <> '' AND user_agent NOT REGEXP '^h:[A-Za-z0-9_-]{43}$')
+             LIMIT 250"
+        );
+
+        $migration_succeeded = true;
+        foreach ((array) $rows as $row) {
+            $old_session_token = (string) $row->session_token;
+            $stored_session_token = self::hash_session_token_value($old_session_token);
+            $updated = $wpdb->update(
+                $table_name,
+                array(
+                    'session_token' => $stored_session_token,
+                    'access_platform_id' => self::privacy_hash_value($row->access_platform_id),
+                    'ip_address' => self::privacy_hash_value($row->ip_address),
+                    'user_agent' => self::privacy_hash_value($row->user_agent),
+                ),
+                array('id' => (int) $row->id),
+                array('%s', '%s', '%s', '%s'),
+                array('%d')
+            );
+            if (false === $updated) {
+                $migration_succeeded = false;
+                continue;
+            }
+
+            $meta_token = get_user_meta((int) $row->user_id, 'access_sso_session_token', true);
+            if (!empty($meta_token) && hash_equals($old_session_token, (string) $meta_token)) {
+                update_user_meta((int) $row->user_id, 'access_sso_session_token', $stored_session_token);
+            }
+        }
+
+        if ($migration_succeeded && count((array) $rows) < 250) {
+            update_option('access_sso_session_storage_version', self::STORAGE_VERSION, false);
+        }
     }
     
     /**
@@ -286,11 +380,9 @@ class AccessSSO_Session_Manager {
         if (AccessPlatformSSO::get_instance()->get_option('enable_logging', '1') === '1') {
             $log_entry = array(
                 'timestamp' => current_time('mysql'),
-                'event' => $event,
-                'user_id' => $user_id,
+                'event' => sanitize_key($event),
+                'user_id' => (int) $user_id,
                 'details' => $details,
-                'ip_address' => $this->get_client_ip(),
-                'user_agent' => isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '',
             );
             
             $logs = get_option('access_sso_session_logs', array());
@@ -335,12 +427,11 @@ class AccessSSO_Session_Manager {
         $subject = sprintf(__('[%s] Suspicious SSO Activity Detected', 'access-platform-sso'), $site_name);
         
         $message = sprintf(
-            __("Suspicious SSO activity detected for user:\n\nUser: %s (%s)\nIndicators: %s\nTime: %s\nIP: %s\n\nPlease review the user's account and sessions.", 'access-platform-sso'),
+            __("Suspicious SSO activity detected for user:\n\nUser: %s (%s)\nIndicators: %s\nTime: %s\n\nPlease review the user's account and sessions.", 'access-platform-sso'),
             $user->display_name,
             $user->user_email,
             implode(', ', $indicators),
-            current_time('mysql'),
-            $this->get_client_ip()
+            current_time('mysql')
         );
         
         wp_mail($admin_email, $subject, $message);

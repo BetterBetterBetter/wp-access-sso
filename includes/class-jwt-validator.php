@@ -10,6 +10,9 @@ if (!defined('ABSPATH')) {
 
 class AccessSSO_JWT_Validator {
     const DEFAULT_JWT_AUDIENCE = 'wordpress-sso';
+    const MAX_TOKEN_LIFETIME = 900;
+    const CLOCK_SKEW = 60;
+    const REPLAY_OPTION_PREFIX = 'access_sso_replay_';
     
     private $platform_url;
     private $jwt_secret;
@@ -59,19 +62,8 @@ class AccessSSO_JWT_Validator {
         
         // Verify algorithm
         if (!isset($decoded_header['alg']) || $decoded_header['alg'] !== 'HS256') {
-            error_log('[Access SSO] JWT alg unsupported: ' . json_encode($decoded_header));
             return array('valid' => false, 'error' => 'Unsupported algorithm');
         }
-        
-        // Logging: claims overview (safe)
-        $claims_info = array(
-            'iss' => isset($decoded_payload['iss']) ? $decoded_payload['iss'] : null,
-            'aud' => isset($decoded_payload['aud']) ? $decoded_payload['aud'] : null,
-            'has_site' => isset($decoded_payload['site']),
-            'site_id' => isset($decoded_payload['site_id']) ? $decoded_payload['site_id'] : (isset($decoded_payload['site']['site_id']) ? $decoded_payload['site']['site_id'] : null),
-            'sub_present' => isset($decoded_payload['sub'])
-        );
-        error_log('[Access SSO] JWT claims: ' . json_encode($claims_info));
 
         // Verify signature (support both raw and base64-encoded secrets)
         $signing_input = $header . '.' . $payload;
@@ -92,21 +84,36 @@ class AccessSSO_JWT_Validator {
         }
 
         if (!$is_valid) {
-            // Log diagnostic hashes, not secrets
-            $secret_hash = substr(hash('sha256', $this->jwt_secret), 0, 12);
-            $sig_short = substr($signature, 0, 10);
-            $exp_short = substr($expected_signature_raw, 0, 10);
-            error_log('[Access SSO] JWT signature mismatch. secret_sha256_12=' . $secret_hash . ' provided_sig=' . $sig_short . ' expected_raw=' . $exp_short . ' used_b64_secret=' . (isset($decoded_secret) && $decoded_secret !== false ? 'yes' : 'no'));
             return array('valid' => false, 'error' => 'Invalid signature');
         }
         
-        // Check expiration. Privileged claims are only trusted on bounded tokens.
+        // Require a short, bounded lifetime so a leaked callback URL expires quickly.
         if (!isset($decoded_payload['exp']) || !is_numeric($decoded_payload['exp'])) {
             return array('valid' => false, 'error' => 'Token expiration missing');
         }
 
-        if ((int) $decoded_payload['exp'] <= time()) {
+        if (!isset($decoded_payload['iat']) || !is_numeric($decoded_payload['iat'])) {
+            return array('valid' => false, 'error' => 'Token issued-at missing');
+        }
+
+        $now = time();
+        $issued_at = (int) $decoded_payload['iat'];
+        $expires_at = (int) $decoded_payload['exp'];
+
+        if ($expires_at <= $now) {
             return array('valid' => false, 'error' => 'Token expired');
+        }
+
+        if ($issued_at > ($now + self::CLOCK_SKEW)) {
+            return array('valid' => false, 'error' => 'Token issued in the future');
+        }
+
+        if ($expires_at <= $issued_at || ($expires_at - $issued_at) > (self::MAX_TOKEN_LIFETIME + self::CLOCK_SKEW)) {
+            return array('valid' => false, 'error' => 'Token lifetime exceeds limit');
+        }
+
+        if (isset($decoded_payload['nbf']) && (!is_numeric($decoded_payload['nbf']) || (int) $decoded_payload['nbf'] > ($now + self::CLOCK_SKEW))) {
+            return array('valid' => false, 'error' => 'Token not yet valid');
         }
 
         // Check issuer against the configured Access Platform URL.
@@ -125,7 +132,6 @@ class AccessSSO_JWT_Validator {
         // Check exact canonical Access site_id. Do not fall back to host matching.
         $payload_site_id = isset($decoded_payload['site_id']) ? $decoded_payload['site_id'] : (isset($decoded_payload['site']['site_id']) ? $decoded_payload['site']['site_id'] : null);
         if (empty($payload_site_id) || empty($this->site_id) || $payload_site_id !== $this->site_id) {
-            error_log('[Access SSO] Site ID mismatch. token_site_id=' . $payload_site_id . ' wp_site_id=' . $this->site_id);
             return array('valid' => false, 'error' => 'Invalid site ID');
         }
         
@@ -136,11 +142,59 @@ class AccessSSO_JWT_Validator {
             'verified' => array(
                 'signature' => true,
                 'expiration' => true,
+                'issued_at' => true,
                 'issuer' => true,
                 'audience' => true,
                 'site_id' => true,
             ),
         );
+    }
+
+    /**
+     * Atomically mark a validated JWT as consumed for the rest of its lifetime.
+     */
+    public function consume_token_once($jwt_token, $expires_at) {
+        $jwt_token = (string) $jwt_token;
+        $expires_at = (int) $expires_at;
+        if (empty($jwt_token) || $expires_at <= time()) {
+            return false;
+        }
+
+        $option_name = self::REPLAY_OPTION_PREFIX . hash('sha256', $jwt_token);
+        $existing_expiration = get_option($option_name, false);
+
+        if (false !== $existing_expiration) {
+            if ((int) $existing_expiration > time()) {
+                return false;
+            }
+
+            delete_option($option_name);
+        }
+
+        $consumed = add_option($option_name, $expires_at, '', 'no');
+        if ($consumed && wp_rand(1, 100) === 1) {
+            $this->cleanup_replay_options();
+        }
+
+        return $consumed;
+    }
+
+    private function cleanup_replay_options() {
+        global $wpdb;
+
+        $like = $wpdb->esc_like(self::REPLAY_OPTION_PREFIX) . '%';
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s LIMIT 200",
+                $like
+            )
+        );
+
+        foreach ((array) $rows as $row) {
+            if ((int) $row->option_value <= time()) {
+                delete_option($row->option_name);
+            }
+        }
     }
 
     /**
@@ -267,6 +321,7 @@ class AccessSSO_JWT_Validator {
         $payload = array_merge($user_data, array(
             'iss' => $this->get_expected_issuer(),
             'aud' => self::DEFAULT_JWT_AUDIENCE,
+            'jti' => wp_generate_uuid4(),
             'iat' => time(),
             'exp' => time() + (15 * 60), // 15 minutes
             'site_id' => $this->site_id,
@@ -296,47 +351,4 @@ class AccessSSO_JWT_Validator {
         return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
     }
     
-    /**
-     * Log validation events for security monitoring
-     */
-    private function log_validation($event, $details) {
-        if (AccessPlatformSSO::get_instance()->get_option('enable_logging', '1') === '1') {
-            $log_entry = array(
-                'timestamp' => current_time('mysql'),
-                'event' => $event,
-                'details' => $details,
-                'ip_address' => $this->get_client_ip(),
-                'user_agent' => isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '',
-            );
-            
-            // Store in WordPress option or custom table
-            $logs = get_option('access_sso_validation_logs', array());
-            $logs[] = $log_entry;
-            
-            // Keep only last 1000 entries
-            if (count($logs) > 1000) {
-                $logs = array_slice($logs, -1000);
-            }
-            
-            update_option('access_sso_validation_logs', $logs);
-        }
-    }
-    
-    /**
-     * Get client IP address
-     */
-    private function get_client_ip() {
-        $ip_keys = array('HTTP_CLIENT_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR');
-        foreach ($ip_keys as $key) {
-            if (array_key_exists($key, $_SERVER) === true) {
-                foreach (explode(',', $_SERVER[$key]) as $ip) {
-                    $ip = trim($ip);
-                    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false) {
-                        return $ip;
-                    }
-                }
-            }
-        }
-        return isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '';
-    }
 }

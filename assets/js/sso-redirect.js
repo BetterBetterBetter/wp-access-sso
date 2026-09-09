@@ -162,25 +162,13 @@
         // Handle SSO login button clicks
         $('.access-sso-login-button').on('click', function(e) {
             var $button = $(this);
-            var href = $button.attr('href');
             
             // Add loading state
             $button.addClass('loading').text('Redirecting...');
             
-            // Track SSO login attempt
-            trackEvent('sso_login_attempt', {
-                platform_url: accessSSO.platform_url,
-                site_id: accessSSO.site_id
-            });
-            
             // Allow natural navigation
             return true;
         });
-        
-        // Handle SSO callback processing
-        if (window.location.search.includes('access_sso_callback=1')) {
-            showProcessingMessage();
-        }
         
         // Check for SSO errors in URL
         var urlParams = new URLSearchParams(window.location.search);
@@ -197,6 +185,7 @@
             }, 2000);
         }
         
+<<<<<<< HEAD
         // Session heartbeat for active SSO sessions
         if (isLoggedIn()) {
             startSessionHeartbeat();
@@ -233,30 +222,9 @@
                 $(this).trigger('click');
             }
         });
+=======
+>>>>>>> a1e47adeca6aa8634330f6d491b594337144b3e7
     });
-    
-    function showProcessingMessage() {
-        var $message = $('<div class="access-sso-success">' +
-            '<p>Processing SSO login... Please wait.</p>' +
-            '</div>');
-        
-        $('body').prepend($message);
-        
-        // Add loading animation
-        var dots = 0;
-        var loadingInterval = setInterval(function() {
-            dots = (dots + 1) % 4;
-            var dotsText = '.'.repeat(dots);
-            $message.find('p').text('Processing SSO login' + dotsText + ' Please wait.');
-        }, 500);
-        
-        // Clear animation after 10 seconds (something went wrong)
-        setTimeout(function() {
-            clearInterval(loadingInterval);
-            $message.removeClass('access-sso-success').addClass('access-sso-error');
-            $message.find('p').text('SSO login is taking longer than expected. Please refresh the page or try again.');
-        }, 10000);
-    }
     
     function showError(message) {
         var $error = $('<div class="access-sso-error">' +
@@ -271,11 +239,6 @@
             retrySSO(1);
         });
         
-        // Track error
-        trackEvent('sso_error', {
-            error_message: message,
-            current_url: window.location.href
-        });
     }
     
     function retrySSO(attempt) {
@@ -288,14 +251,10 @@
         var separator = href.includes('?') ? '&' : '?';
         var retryUrl = href + separator + 'sso_retry=' + attempt;
         
-        trackEvent('sso_retry', {
-            attempt: attempt,
-            retry_url: retryUrl
-        });
-        
         window.location.href = retryUrl;
     }
     
+<<<<<<< HEAD
     function handleGlobalLogout() {
         // Store logout intent
         safeSessionStorageSetItem('access_sso_logout', '1');
@@ -377,6 +336,8 @@
         console.log('SSO Event:', eventName, data);
     }
     
+=======
+>>>>>>> a1e47adeca6aa8634330f6d491b594337144b3e7
     function escapeHtml(text) {
         var map = {
             '&': '&amp;',
@@ -399,6 +360,7 @@
         }
     });
     
+<<<<<<< HEAD
     // Make functions available globally for debugging
     window.accessSSOFrontend = {
         showError: showError,
@@ -406,6 +368,20 @@
         retrySSO: retrySSO,
         trackEvent: trackEvent,
         handleSessionExpired: handleSessionExpired
+=======
+    // Keyboard accessibility for SSO button
+    $('.access-sso-login-button').on('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            $(this).trigger('click');
+        }
+    });
+    
+    // Make functions available globally for debugging
+    window.accessSSOFrontend = {
+        showError: showError,
+        retrySSO: retrySSO
+>>>>>>> a1e47adeca6aa8634330f6d491b594337144b3e7
     };
     
 })(jQuery);

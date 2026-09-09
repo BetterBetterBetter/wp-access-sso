@@ -15,7 +15,8 @@ class AccessSSO_User_Provisioner {
     
     public function __construct() {
         $this->auto_provision = AccessPlatformSSO::get_instance()->get_option('auto_provision', '1') === '1';
-        $this->default_role = AccessPlatformSSO::get_instance()->get_option('default_role', 'subscriber');
+        $configured_role = AccessPlatformSSO::get_instance()->get_option('default_role', 'subscriber');
+        $this->default_role = $this->get_safe_default_role($configured_role);
     }
     
     /**
@@ -51,13 +52,11 @@ class AccessSSO_User_Provisioner {
         if ($lock_value) {
             // Another request is currently provisioning this user
             // Wait briefly and then try to find the user
-            error_log('[Access SSO] Provisioning lock detected for ' . $email . ', waiting for other request to complete');
             usleep(500000); // 500ms
             
             // Try to find the user that should have been created
             $existing_user = $this->find_existing_user($email, $access_platform_id);
             if ($existing_user) {
-                error_log('[Access SSO] Found user after lock wait: ' . $existing_user->ID);
                 return $this->update_user($existing_user, $user_data);
             }
             // If still not found, proceed with normal flow (lock may have expired)
@@ -142,12 +141,9 @@ class AccessSSO_User_Provisioner {
                 strpos($error_message, 'email address is already used') !== false ||
                 strpos($error_message, 'email already exists') !== false) {
                 
-                error_log('[Access SSO] Race condition detected: email already exists, attempting to find and update user: ' . $email);
-                
                 // Try to find the user by email and update them instead
                 $existing_user = get_user_by('email', $email);
                 if ($existing_user) {
-                    error_log('[Access SSO] Found existing user by email after race condition: ' . $existing_user->ID);
                     return $this->update_user($existing_user, $user_data);
                 }
                 
@@ -161,7 +157,6 @@ class AccessSSO_User_Provisioner {
                         'number' => 1,
                     ));
                     if (!empty($users)) {
-                        error_log('[Access SSO] Found existing user by Access Platform ID after race condition: ' . $users[0]->ID);
                         return $this->update_user($users[0], $user_data);
                     }
                 }
@@ -176,12 +171,9 @@ class AccessSSO_User_Provisioner {
                 if ($user_id_from_db) {
                     $existing_user = get_user_by('ID', $user_id_from_db);
                     if ($existing_user) {
-                        error_log('[Access SSO] Found existing user by case-insensitive email query: ' . $existing_user->ID);
                         return $this->update_user($existing_user, $user_data);
                     }
                 }
-                
-                error_log('[Access SSO] Could not recover from race condition for email: ' . $email);
             }
             
             return $user_id;
@@ -211,7 +203,6 @@ class AccessSSO_User_Provisioner {
     private function update_user($user, $user_data) {
         // Update Access Platform metadata (for tracking SSO logins)
         $this->update_user_metadata($user->ID, $user_data);
-        $this->maybe_promote_user_to_administrator($user, $user_data);
         
         // Log user update
         $this->log_user_action('updated', $user->ID, $user_data);
@@ -268,64 +259,47 @@ class AccessSSO_User_Provisioner {
      * Map Access Platform role to WordPress role (for NEW users only).
      */
     private function map_user_role($user_data) {
-        if ($this->should_promote_to_administrator($user_data)) {
-            return 'administrator';
-        }
-
         return $this->default_role;
     }
 
     /**
-     * Promote verified Access admins without downgrading anyone else.
+     * Access claims are identity attributes, not WordPress authorization grants.
+     * New accounts receive only a safe role configured by a WordPress admin.
      */
-    private function maybe_promote_user_to_administrator($user, $user_data) {
-        if (!$this->should_promote_to_administrator($user_data)) {
-            return;
+    private function get_safe_default_role($configured_role) {
+        $configured_role = sanitize_key($configured_role);
+        $role = get_role($configured_role);
+
+        if (!$role || 'administrator' === $configured_role) {
+            return 'subscriber';
         }
 
-        if (in_array('administrator', (array) $user->roles, true)) {
-            return;
-        }
-
-        $user->set_role('administrator');
-    }
-
-    /**
-     * Access admin intent must come from a fully validated JWT.
-     */
-    private function should_promote_to_administrator($user_data) {
-        if (!$this->has_verified_privileged_claims($user_data)) {
-            return false;
-        }
-
-        if (!get_role('administrator')) {
-            return false;
-        }
-
-        if (isset($user_data['is_admin']) && $user_data['is_admin'] === true) {
-            return true;
-        }
-
-        if (isset($user_data['access_role']) && strtolower((string) $user_data['access_role']) === 'admin') {
-            return true;
-        }
-
-        return isset($user_data['role']) && $user_data['role'] === 'administrator';
-    }
-
-    private function has_verified_privileged_claims($user_data) {
-        if (empty($user_data['_access_sso_validation']) || !is_array($user_data['_access_sso_validation'])) {
-            return false;
-        }
-
-        $required_checks = array('signature', 'expiration', 'issuer', 'audience', 'site_id');
-        foreach ($required_checks as $check) {
-            if (!isset($user_data['_access_sso_validation'][$check]) || $user_data['_access_sso_validation'][$check] !== true) {
-                return false;
+        $privileged_capabilities = array(
+            'manage_options',
+            'edit_users',
+            'list_users',
+            'promote_users',
+            'create_users',
+            'delete_users',
+            'remove_users',
+            'edit_posts',
+            'publish_posts',
+            'edit_pages',
+            'publish_pages',
+            'upload_files',
+            'moderate_comments',
+            'manage_categories',
+            'unfiltered_html',
+            'edit_theme_options',
+            'manage_woocommerce',
+        );
+        foreach ($privileged_capabilities as $privileged_capability) {
+            if ($role->has_cap($privileged_capability)) {
+                return 'subscriber';
             }
         }
 
-        return true;
+        return $configured_role;
     }
     
     /**
@@ -333,8 +307,9 @@ class AccessSSO_User_Provisioner {
      */
     private function update_user_metadata($user_id, $user_data) {
         // Store Access Platform ID
-        if (isset($user_data['id'])) {
-            update_user_meta($user_id, 'access_platform_id', sanitize_text_field($user_data['id']));
+        $access_platform_id = isset($user_data['id']) ? $user_data['id'] : (isset($user_data['sub']) ? $user_data['sub'] : '');
+        if (!empty($access_platform_id)) {
+            update_user_meta($user_id, 'access_platform_id', sanitize_text_field($access_platform_id));
         }
         
         // Store subscription information
@@ -349,7 +324,9 @@ class AccessSSO_User_Provisioner {
         // Store additional metadata
         if (isset($user_data['metadata']) && is_array($user_data['metadata'])) {
             foreach ($user_data['metadata'] as $key => $value) {
-                update_user_meta($user_id, 'access_' . sanitize_key($key), sanitize_text_field($value));
+                if (is_scalar($value)) {
+                    update_user_meta($user_id, 'access_' . sanitize_key($key), sanitize_text_field((string) $value));
+                }
             }
         }
         
@@ -395,11 +372,8 @@ class AccessSSO_User_Provisioner {
         if (AccessPlatformSSO::get_instance()->get_option('enable_logging', '1') === '1') {
             $log_entry = array(
                 'timestamp' => current_time('mysql'),
-                'action' => $action,
-                'user_id' => $user_id,
-                'access_platform_id' => isset($user_data['id']) ? $user_data['id'] : '',
-                'email' => isset($user_data['email']) ? $user_data['email'] : '',
-                'ip_address' => $this->get_client_ip(),
+                'action' => sanitize_key($action),
+                'user_id' => (int) $user_id,
             );
             
             $logs = get_option('access_sso_user_logs', array());
@@ -412,24 +386,6 @@ class AccessSSO_User_Provisioner {
             
             update_option('access_sso_user_logs', $logs);
         }
-    }
-    
-    /**
-     * Get client IP address
-     */
-    private function get_client_ip() {
-        $ip_keys = array('HTTP_CLIENT_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR');
-        foreach ($ip_keys as $key) {
-            if (array_key_exists($key, $_SERVER) === true) {
-                foreach (explode(',', $_SERVER[$key]) as $ip) {
-                    $ip = trim($ip);
-                    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false) {
-                        return $ip;
-                    }
-                }
-            }
-        }
-        return isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '';
     }
     
 }

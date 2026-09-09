@@ -131,16 +131,14 @@ class SiteIdSafetyTests(unittest.TestCase):
         self.assertNotIn("Host matched; accept despite ID mismatch", source)
         self.assertNotIn("redirect_url host matches this WordPress host", source)
 
-    def test_admin_sso_claims_promote_without_customer_downgrade(self):
+    def test_access_claims_cannot_change_wordpress_roles(self):
         source = read(USER_PROVISIONER)
 
-        self.assertIn("should_promote_to_administrator", source)
-        self.assertIn("has_verified_privileged_claims", source)
-        self.assertIn("$user_data['is_admin'] === true", source)
-        self.assertIn("$user_data['access_role']) && strtolower((string) $user_data['access_role']) === 'admin'", source)
-        self.assertIn("$user_data['role']) && $user_data['role'] === 'administrator'", source)
-        self.assertIn("$user->set_role('administrator')", source)
-        self.assertIn("return $this->default_role", source)
+        self.assertNotIn("should_promote_to_administrator", source)
+        self.assertNotIn("maybe_promote_user_to_administrator", source)
+        self.assertNotIn("$user->set_role('administrator')", source)
+        self.assertIn("get_safe_default_role", source)
+        self.assertIn("return 'subscriber'", source)
 
     def test_sso_callback_passes_verified_claims_before_redirecting(self):
         source = read(MAIN_PLUGIN)
@@ -155,16 +153,11 @@ class SiteIdSafetyTests(unittest.TestCase):
         self.assertLess(provisioning_position, final_redirect_position)
         self.assertIn("$provisioning_claims['_access_sso_validation']", source)
 
-    def test_sso_callback_requires_active_subscription_for_non_admins(self):
+    def test_sso_callback_does_not_duplicate_access_authorization(self):
         source = read(MAIN_PLUGIN)
 
-        guard_position = source.index("'active' !== $subscription_status")
-        provisioning_position = source.index("$wp_user = $user_provisioner->provision_user($provisioning_claims)")
-
-        self.assertLess(guard_position, provisioning_position)
-        self.assertIn("$subscription_status", source)
-        self.assertIn("$is_admin_claim", source)
-        self.assertIn("active subscription required", source)
+        self.assertNotIn("active subscription required", source)
+        self.assertNotIn("'active' !== $subscription_status", source)
 
 
 if __name__ == "__main__":

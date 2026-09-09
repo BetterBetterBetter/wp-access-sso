@@ -105,33 +105,44 @@
     /**
      * Build the SSO login URL
      */
-    function buildSSOUrl() {
-        if (!config.platform_url || !config.site_id) {
-            console.warn('Access SSO: Missing platform_url or site_id configuration');
+    function getReturnUrl(form) {
+        const pageUrl = new URL(window.location.href);
+        const queryRedirect = pageUrl.searchParams.get('redirect_to');
+        if (queryRedirect) {
+            return queryRedirect;
+        }
+
+        const formRedirect = form && form.querySelector('input[name="redirect_to"]');
+        if (formRedirect && formRedirect.value) {
+            return formRedirect.value;
+        }
+
+        return pageUrl.toString();
+    }
+
+    function buildSSOUrl(form) {
+        if (!config.login_url) {
+            console.warn('Access SSO: Missing login URL configuration');
             return null;
         }
 
-        const callbackUrl = config.callback_url || (window.location.origin + '/?access_sso_callback=1');
-        
-        // Build the SSO URL with all required parameters
-        const params = new URLSearchParams({
-            site_id: config.site_id,
-            callback: callbackUrl,
-            redirect_to: callbackUrl,
-            return_to: callbackUrl,
-            redirect_url: callbackUrl
-        });
-
-        return `${config.platform_url}/login?${params.toString()}`;
+        const loginUrl = new URL(config.login_url, window.location.origin);
+        loginUrl.searchParams.set('return_to', getReturnUrl(form));
+        return loginUrl.toString();
     }
 
     /**
      * Create the SSO button element
      */
+<<<<<<< HEAD
     function createSSOButton(formType = 'generic') {
         if (!isBrowserSupported()) return null;
 
         const ssoUrl = buildSSOUrl();
+=======
+    function createSSOButton(formType = 'generic', form = null) {
+        const ssoUrl = buildSSOUrl(form);
+>>>>>>> a1e47adeca6aa8634330f6d491b594337144b3e7
         if (!ssoUrl) return null;
 
         // Create wrapper
@@ -158,44 +169,12 @@
         wrapper.appendChild(divider);
 
         // Add click handler
-        button.addEventListener('click', function(e) {
+        button.addEventListener('click', function() {
             button.classList.add('loading');
             button.textContent = 'Redirecting...';
-            
-            // Track the click
-            trackSSOClick(formType);
         });
 
         return wrapper;
-    }
-
-    /**
-     * Track SSO button clicks for analytics
-     */
-    function trackSSOClick(formType) {
-        console.log('Access SSO: Login button clicked', { formType, url: window.location.href });
-        
-        // Send to analytics if available
-        if (typeof gtag !== 'undefined') {
-            gtag('event', 'sso_login_click', {
-                form_type: formType,
-                page_url: window.location.href
-            });
-        }
-
-        // Send to WordPress for tracking
-        if (config.ajaxurl && config.nonce) {
-            fetch(config.ajaxurl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams({
-                    action: 'access_sso_track_click',
-                    nonce: config.nonce,
-                    form_type: formType,
-                    page_url: window.location.href
-                })
-            }).catch(() => {}); // Ignore errors, don't block navigation
-        }
     }
 
     /**
@@ -211,7 +190,7 @@
         // Check if parent already has SSO button (for nested forms)
         if (form.closest('.access-sso-login-wrapper')) return false;
 
-        const button = createSSOButton(formType);
+        const button = createSSOButton(formType, form);
         if (!button) return false;
 
         // Find the best insertion point
@@ -254,10 +233,8 @@
             }
             
             processedForms.add(form);
-            console.log('Access SSO: Injected button into', formType, 'form', form);
             return true;
         } catch (e) {
-            console.error('Access SSO: Failed to inject button', e);
             return false;
         }
     }
@@ -294,10 +271,6 @@
                 }
             });
         });
-
-        if (formsEnhanced > 0) {
-            console.log(`Access SSO: Enhanced ${formsEnhanced} login form(s)`);
-        }
 
         return formsEnhanced;
     }
@@ -364,7 +337,6 @@
                 try {
                     const regex = new RegExp(pattern.slice(1, -1), 'i');
                     if (regex.test(currentPath) || regex.test(currentUrl)) {
-                        console.log('Access SSO: Page excluded by regex pattern:', pattern);
                         return true;
                     }
                 } catch (e) {
@@ -374,7 +346,6 @@
             
             // Exact path match
             if (currentPath === pattern || currentPath === pattern + '/') {
-                console.log('Access SSO: Page excluded by exact match:', pattern);
                 return true;
             }
             
@@ -382,14 +353,12 @@
             if (pattern.endsWith('*')) {
                 const prefix = pattern.slice(0, -1);
                 if (currentPath.startsWith(prefix)) {
-                    console.log('Access SSO: Page excluded by prefix match:', pattern);
                     return true;
                 }
             }
             
             // Contains match
             if (currentPath.includes(pattern) || currentUrl.includes(pattern)) {
-                console.log('Access SSO: Page excluded by contains match:', pattern);
                 return true;
             }
         }
@@ -411,13 +380,11 @@
 
         // Don't run if user is already logged in (unless config says otherwise)
         if (!config.show_when_logged_in && document.body.classList.contains('logged-in')) {
-            console.log('Access SSO: User already logged in, skipping form detection');
             return;
         }
 
         // Don't run if disabled
         if (config.disabled) {
-            console.log('Access SSO: Form detection disabled');
             return;
         }
 
@@ -428,7 +395,6 @@
 
         // Don't run on excluded pages
         if (isPageExcluded()) {
-            console.log('Access SSO: Current page is excluded, skipping form detection');
             return;
         }
 
@@ -442,7 +408,6 @@
         setTimeout(detectAndEnhanceForms, 1000);
         setTimeout(detectAndEnhanceForms, 3000);
 
-        console.log('Access SSO: Form detector initialized');
     }
 
     // Initialize when DOM is ready
@@ -472,4 +437,3 @@
     };
 
 })();
-
