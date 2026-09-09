@@ -275,8 +275,14 @@ This plugin is licensed under GPL v2 or later.
 
 ## Changelog
 
-### Version 1.1.9
+### Version 1.2.1
+- Fixed the account-page banner being injected inside the MemberPress nav (it split the tabs into two rows) and removed the extra nav tab; the banner now renders as a single card directly under the nav
+- Restyled the banner: neutral card, inherits the page font, compact primary button, stacks on narrow screens
+
+### Version 1.2.0
 - **NEW**: Account page "Manage or cancel your membership" button for Access-billed members (users with `access_platform_id` meta), linking to Access `/subscriptions`; banner injected below the MemberPress account nav by `assets/js/account-manage-detector.js`; Account Page settings section (disable toggle, button text, help text, Access path). Legacy MemberPress-billed members unaffected.
+
+### Version 1.1.9
 - Detect blocked first-party cookies and `sessionStorage` before starting SSO
 - Show Brave-compatible privacy guidance and a reload action instead of allowing an uncaught storage error
 - Guard all `sessionStorage` operations against browser `SecurityError` exceptions
