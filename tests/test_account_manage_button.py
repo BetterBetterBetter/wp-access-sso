@@ -42,23 +42,28 @@ class AccountManageButtonTests(unittest.TestCase):
         self.assertNotIn("mepr/v1/subscriptions", source)
         self.assertNotRegex(source, r"cancel_subscription\s*\(")
 
-    def test_php_nav_hook_and_js_fallback_are_both_wired(self):
+    def test_detector_script_is_enqueued_for_access_users_only(self):
         source = read(MAIN_PLUGIN)
 
-        self.assertIn("add_action('mepr_account_nav', array($this, 'render_account_manage_nav'));", source)
-        self.assertIn("public function render_account_manage_nav()", source)
-        self.assertIn("data-access-manage-billing=\"1\"", source)
         self.assertIn("'access-sso-account-manage'", source)
         self.assertIn("assets/js/account-manage-detector.js", source)
         self.assertIn("wp_localize_script('access-sso-account-manage', 'accessSSOAccountManage'", source)
+        # No server-rendered nav tab: it broke the MemberPress nav row.
+        self.assertNotIn("mepr_account_nav", source)
+        self.assertNotIn("render_account_manage_nav", source)
 
-    def test_detector_script_never_duplicates_php_button(self):
+    def test_banner_is_placed_outside_the_memberpress_nav(self):
         js = read(DETECTOR_JS)
 
         self.assertIn("window.accessSSOAccountManage", js)
-        self.assertIn("[data-access-manage-billing=\"1\"]", js)
-        self.assertIn("if (!hasPhpNavLink)", js)
+        self.assertIn("var NAV_SELECTOR = '#mepr-account-nav", js)
+        self.assertIn("nav.insertAdjacentElement('afterend', notice)", js)
+        self.assertIn("closest(NAV_SELECTOR)", js)
+        self.assertIn("document.querySelector('.access-manage-billing-notice')", js)
         self.assertIn("MutationObserver", js)
+        # Never create nav tabs or insert before a nav tab.
+        self.assertNotIn("mepr-nav-item access-manage-billing-nav", js)
+        self.assertNotIn(".mepr-account-subscriptions", js)
 
     def test_settings_are_registered(self):
         source = read(ADMIN_SETTINGS)

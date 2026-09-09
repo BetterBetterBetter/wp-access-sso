@@ -86,12 +86,6 @@ class AccessPlatformSSO {
         // Login form customization
         add_action('login_form', array($this, 'add_sso_login_button'));
         add_filter('login_message', array($this, 'add_sso_login_message'));
-
-        // MemberPress account page: Access-billed members have no MemberPress
-        // subscription to cancel, so give them a button that goes to Access.
-        // The PHP hook renders a nav item when MemberPress exposes it; the
-        // enqueued detector script covers themes/templates that do not.
-        add_action('mepr_account_nav', array($this, 'render_account_manage_nav'));
     }
     
     public function init() {
@@ -179,7 +173,9 @@ class AccessPlatformSSO {
         
         wp_localize_script('access-sso-detector', 'accessSSODetector', $detector_config);
 
-        // Account page "manage or cancel" button for Access-billed members only
+        // MemberPress account page: Access-billed members have no MemberPress
+        // subscription to cancel. The detector script adds one banner below the
+        // account nav that sends them to Access. Enqueued for those users only.
         if ($this->should_show_account_manage_button()) {
             wp_enqueue_script(
                 'access-sso-account-manage',
@@ -238,19 +234,6 @@ class AccessPlatformSSO {
         return $text !== '' ? $text : __('Your billing is handled by your Access account. Manage payment details or cancel there.', 'access-platform-sso');
     }
 
-    /**
-     * MemberPress `mepr_account_nav` action: add a nav item pointing at Access.
-     */
-    public function render_account_manage_nav() {
-        if (!$this->should_show_account_manage_button()) {
-            return;
-        }
-        echo '<span class="mepr-nav-item access-manage-billing-nav">';
-        echo '<a href="' . esc_url($this->get_manage_billing_url()) . '" class="access-manage-billing-link" data-access-manage-billing="1">';
-        echo esc_html($this->get_manage_billing_button_text());
-        echo '</a></span>';
-    }
-    
     /**
      * Get the list of enabled form types for the detector
      */

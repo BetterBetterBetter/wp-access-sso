@@ -112,14 +112,13 @@ MemberPress never see the button, so their normal cancel flow is untouched.
 
 ### How it renders
 
-1. **PHP**: `mepr_account_nav` action renders an extra nav item. Confirm the
-   hook name against the installed MemberPress version; if the nav does not show
-   the item, the JavaScript path below still covers the page.
-2. **JavaScript** (`assets/js/account-manage-detector.js`): detects the
-   MemberPress account UI (`#mepr-account-nav`, `.mepr-account-subscriptions`,
-   `.mepr-account-table`, ...) and inserts a notice with the button above the
-   subscriptions list. It never duplicates a button PHP already rendered, and
-   it watches for late-rendered account tabs for ten seconds.
+`assets/js/account-manage-detector.js` (enqueued only for Access-billed users)
+detects the MemberPress account page and inserts a single banner **immediately
+after** `#mepr-account-nav`, falling back to just above `.mepr-account-table`
+or the top of the account content. It never inserts inside the nav: MemberPress
+lays the tabs out with flex-wrap and anything injected between them breaks the
+row. It watches for late-rendered account tabs for ten seconds and never adds
+a second banner. There is deliberately no `mepr_account_nav` nav item.
 
 The button links to `<Access Platform URL>/subscriptions` by default. Access
 owns billing, so the plugin deliberately does **not** cancel anything through
@@ -136,8 +135,9 @@ the MemberPress API.
 
 1. In Access admin, impersonate ("Login as") an Access-billed member, open this
    site and press "Login with Access Platform".
-2. Visit `/mepr-account/?action=subscriptions`. Expect the notice and button
-   above the table, and a nav item if MemberPress exposes `mepr_account_nav`.
+2. Visit `/mepr-account/?action=subscriptions`. Expect one banner with the
+   button directly under the account nav, above the table, and the nav itself
+   unchanged (one row, no extra tab).
 3. Click the button. Expect to land on the member's Access subscription list
    with "Manage Billing" and "Cancel Subscription" visible (log in to Access
    if prompted).
@@ -276,7 +276,7 @@ This plugin is licensed under GPL v2 or later.
 ## Changelog
 
 ### Version 1.1.9
-- **NEW**: Account page "Manage or cancel your membership" button for Access-billed members (users with `access_platform_id` meta), linking to Access `/subscriptions`; `mepr_account_nav` item plus JavaScript detector fallback (`assets/js/account-manage-detector.js`); Account Page settings section (disable toggle, button text, help text, Access path). Legacy MemberPress-billed members unaffected.
+- **NEW**: Account page "Manage or cancel your membership" button for Access-billed members (users with `access_platform_id` meta), linking to Access `/subscriptions`; banner injected below the MemberPress account nav by `assets/js/account-manage-detector.js`; Account Page settings section (disable toggle, button text, help text, Access path). Legacy MemberPress-billed members unaffected.
 - Detect blocked first-party cookies and `sessionStorage` before starting SSO
 - Show Brave-compatible privacy guidance and a reload action instead of allowing an uncaught storage error
 - Guard all `sessionStorage` operations against browser `SecurityError` exceptions

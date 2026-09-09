@@ -3,13 +3,13 @@
  *
  * Members billed through Access have no MemberPress subscription to cancel, so
  * the MemberPress account page shows them nothing actionable. This script
- * finds the MemberPress account UI and adds a clear "manage or cancel" button
- * that sends them to Access.
+ * finds the MemberPress account page and adds one banner, directly below the
+ * account nav, with a "manage or cancel" button that sends them to Access.
  *
  * Only enqueued for logged-in users with the `access_platform_id` user meta
- * (see access-platform-sso.php). If the PHP `mepr_account_nav` hook already
- * rendered a link, this script only adds the notice above the subscriptions
- * table and never duplicates the button.
+ * (see access-platform-sso.php). The banner is never placed inside the nav:
+ * MemberPress lays the nav out with flex-wrap, and anything injected between
+ * its tabs breaks the row.
  */
 (function () {
     'use strict';
@@ -19,25 +19,16 @@
         return;
     }
 
-    // Containers that identify the MemberPress account page, most specific first.
-    var ACCOUNT_SELECTORS = [
-        '#mepr-account-nav',
-        '.mepr-account-nav',
-        '.mepr_pro_account_nav',
-        '#mepr-account-subscriptions',
-        '.mepr-account-subscriptions',
-        '.mepr-account-table',
-        '#mepr-account-home',
-        '.mepr-account-home',
-        '.mp_wrapper .mepr-nav-item'
-    ];
+    var NAV_SELECTOR = '#mepr-account-nav, .mepr-nav, .mepr-account-nav, .mepr_pro_account_nav';
 
-    var NOTICE_ANCHOR_SELECTORS = [
-        '#mepr-account-subscriptions',
-        '.mepr-account-subscriptions',
+    // Anything that identifies the MemberPress account page.
+    var ACCOUNT_SELECTORS = [
+        NAV_SELECTOR,
         '.mepr-account-table',
         '#mepr-account-home',
-        '.mepr-account-home'
+        '#mepr-account-subscriptions',
+        '#mepr-account-payments',
+        '.mp_wrapper .mepr-nav-item'
     ];
 
     function firstMatch(selectors) {
@@ -50,52 +41,66 @@
         return null;
     }
 
-    function buildButton(className) {
+    function buildNotice() {
+        var notice = document.createElement('div');
+        notice.className = 'access-manage-billing-notice';
+        notice.setAttribute('role', 'note');
+
+        var text = document.createElement('p');
+        text.className = 'access-manage-billing-text';
+        text.textContent = config.help_text || 'Your billing is handled by your Access account.';
+
         var link = document.createElement('a');
         link.href = config.manage_url;
-        link.className = className;
+        link.className = 'access-manage-billing-button';
         link.setAttribute('data-access-manage-billing', '1');
         link.textContent = config.button_text || 'Manage or cancel your membership';
-        return link;
+
+        notice.appendChild(text);
+        notice.appendChild(link);
+        return notice;
+    }
+
+    /**
+     * Decide where the banner goes. Order of preference:
+     *   1. immediately after the account nav (outside it)
+     *   2. immediately before the subscriptions/payments table
+     *   3. at the top of a known account content container
+     */
+    function placeNotice(notice) {
+        var nav = document.querySelector(NAV_SELECTOR);
+        if (nav && nav.parentNode) {
+            nav.insertAdjacentElement('afterend', notice);
+            return true;
+        }
+
+        var table = document.querySelector('.mepr-account-table');
+        if (table) {
+            // Walk up out of any wrapper that is itself inside the nav.
+            var target = table.closest(NAV_SELECTOR) ? null : table;
+            if (target && target.parentNode) {
+                target.insertAdjacentElement('beforebegin', notice);
+                return true;
+            }
+        }
+
+        var content = firstMatch(['#mepr-account-home', '#mepr-account-subscriptions', '#mepr-account-payments', '.mp_wrapper']);
+        if (content && !content.closest(NAV_SELECTOR)) {
+            content.insertAdjacentElement('afterbegin', notice);
+            return true;
+        }
+
+        return false;
     }
 
     function inject() {
         if (!firstMatch(ACCOUNT_SELECTORS)) {
             return false;
         }
-
-        var hasPhpNavLink = Boolean(document.querySelector('[data-access-manage-billing="1"]'));
-
-        // Notice card above the subscriptions list (or account home).
-        if (!document.querySelector('.access-manage-billing-notice')) {
-            var anchor = firstMatch(NOTICE_ANCHOR_SELECTORS);
-            if (anchor) {
-                var notice = document.createElement('div');
-                notice.className = 'access-manage-billing-notice';
-                notice.setAttribute('role', 'note');
-
-                var text = document.createElement('p');
-                text.className = 'access-manage-billing-text';
-                text.textContent = config.help_text || 'Your billing is handled by your Access account.';
-                notice.appendChild(text);
-                notice.appendChild(buildButton('access-manage-billing-button'));
-
-                anchor.parentNode.insertBefore(notice, anchor);
-            }
+        if (document.querySelector('.access-manage-billing-notice')) {
+            return true;
         }
-
-        // Nav item, only when PHP did not already render one.
-        if (!hasPhpNavLink) {
-            var nav = firstMatch(['#mepr-account-nav', '.mepr-account-nav', '.mepr_pro_account_nav']);
-            if (nav && !nav.querySelector('[data-access-manage-billing="1"]')) {
-                var item = document.createElement('span');
-                item.className = 'mepr-nav-item access-manage-billing-nav';
-                item.appendChild(buildButton('access-manage-billing-link'));
-                nav.appendChild(item);
-            }
-        }
-
-        return true;
+        return placeNotice(buildNotice());
     }
 
     function init() {
