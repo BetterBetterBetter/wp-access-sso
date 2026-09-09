@@ -134,15 +134,10 @@
     /**
      * Create the SSO button element
      */
-<<<<<<< HEAD
-    function createSSOButton(formType = 'generic') {
+    function createSSOButton(formType = 'generic', form = null) {
         if (!isBrowserSupported()) return null;
 
-        const ssoUrl = buildSSOUrl();
-=======
-    function createSSOButton(formType = 'generic', form = null) {
         const ssoUrl = buildSSOUrl(form);
->>>>>>> a1e47adeca6aa8634330f6d491b594337144b3e7
         if (!ssoUrl) return null;
 
         // Create wrapper

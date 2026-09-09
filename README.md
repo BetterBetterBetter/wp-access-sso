@@ -276,19 +276,16 @@ This plugin is licensed under GPL v2 or later.
 ## Changelog
 
 ### Version 1.1.9
-<<<<<<< HEAD
 - **NEW**: Account page "Manage or cancel your membership" button for Access-billed members (users with `access_platform_id` meta), linking to Access `/subscriptions`; `mepr_account_nav` item plus JavaScript detector fallback (`assets/js/account-manage-detector.js`); Account Page settings section (disable toggle, button text, help text, Access path). Legacy MemberPress-billed members unaffected.
 - Detect blocked first-party cookies and `sessionStorage` before starting SSO
 - Show Brave-compatible privacy guidance and a reload action instead of allowing an uncaught storage error
 - Guard all `sessionStorage` operations against browser `SecurityError` exceptions
-=======
 - Added browser-bound state for WordPress-started SSO and retained constrained signed compatibility for Access dashboard launches
 - Enforced 15-minute JWT lifetimes and one-time callback token consumption
 - Prevented Access claims from granting or changing WordPress roles
 - Hashed session tokens and request fingerprints at rest, including incremental legacy-data migration
 - Added strict admin nonces, application rate limits, safe local redirects, no-store responses, and WP Rocket exclusions
 - Removed the frontend processing splash and sensitive diagnostics
->>>>>>> a1e47adeca6aa8634330f6d491b594337144b3e7
 
 ### Version 1.1.0
 - **NEW**: Login Form Detector - Automatically detects and enhances login forms

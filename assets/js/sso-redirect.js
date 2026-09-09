@@ -185,45 +185,6 @@
             }, 2000);
         }
         
-<<<<<<< HEAD
-        // Session heartbeat for active SSO sessions
-        if (isLoggedIn()) {
-            startSessionHeartbeat();
-        }
-        
-        // Handle logout events
-        $(document).on('click', 'a[href*="wp-login.php?action=logout"]', function(e) {
-            if (accessSSO.global_logout) {
-                handleGlobalLogout();
-            }
-        });
-
-        // Handle SSO logout completion
-        if (safeSessionStorageGetItem('access_sso_logout') === '1') {
-            safeSessionStorageRemoveItem('access_sso_logout');
-
-            // Show logout success message
-            var $message = $('<div class="access-sso-success">' +
-                '<p>You have been logged out from all sites.</p>' +
-                '</div>');
-
-            $('#loginform').before($message);
-
-            // Auto-hide after 5 seconds
-            setTimeout(function() {
-                $message.fadeOut();
-            }, 5000);
-        }
-
-        // Keyboard accessibility for SSO button
-        $('.access-sso-login-button').on('keydown', function(e) {
-            if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                $(this).trigger('click');
-            }
-        });
-=======
->>>>>>> a1e47adeca6aa8634330f6d491b594337144b3e7
     });
     
     function showError(message) {
@@ -254,90 +215,6 @@
         window.location.href = retryUrl;
     }
     
-<<<<<<< HEAD
-    function handleGlobalLogout() {
-        // Store logout intent
-        safeSessionStorageSetItem('access_sso_logout', '1');
-        
-        // Track logout
-        trackEvent('sso_logout', {
-            global_logout: true,
-            platform_url: accessSSO.platform_url
-        });
-    }
-    
-    function startSessionHeartbeat() {
-        // Send heartbeat every 5 minutes to keep session alive
-        setInterval(function() {
-            $.ajax({
-                url: accessSSO.ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'access_sso_heartbeat',
-                    nonce: accessSSO.nonce
-                },
-                success: function(response) {
-                    if (!response.success) {
-                        // Session expired or invalid
-                        handleSessionExpired();
-                    }
-                },
-                error: function() {
-                    // Network error, don't do anything drastic
-                    console.log('SSO heartbeat failed - network error');
-                }
-            });
-        }, 5 * 60 * 1000); // 5 minutes
-    }
-    
-    function handleSessionExpired() {
-        // Show session expired message
-        var $message = $('<div class="notice notice-warning" style="margin: 20px 0;">' +
-            '<p><strong>Session Expired:</strong> Your SSO session has expired. Please <a href="' + window.location.href + '">refresh the page</a> to login again.</p>' +
-            '</div>');
-        
-        $('body').prepend($message);
-        
-        // Track session expiration
-        trackEvent('sso_session_expired', {
-            current_url: window.location.href,
-            timestamp: new Date().toISOString()
-        });
-    }
-    
-    function isLoggedIn() {
-        // Check if user is logged in (WordPress specific)
-        return $('body').hasClass('logged-in') || $('#wpadminbar').length > 0;
-    }
-    
-    function trackEvent(eventName, data) {
-        // Track SSO events for analytics/debugging
-        if (typeof gtag !== 'undefined') {
-            gtag('event', eventName, data);
-        } else if (typeof ga !== 'undefined') {
-            ga('send', 'event', 'SSO', eventName, JSON.stringify(data));
-        }
-        
-        // Also send to our own tracking endpoint
-        if (accessSSO.track_events) {
-            $.ajax({
-                url: accessSSO.ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'access_sso_track_event',
-                    nonce: accessSSO.nonce,
-                    event_name: eventName,
-                    event_data: JSON.stringify(data)
-                }
-            });
-        }
-        
-        // Log to console for debugging
-        console.log('SSO Event:', eventName, data);
-    }
-    
-=======
->>>>>>> a1e47adeca6aa8634330f6d491b594337144b3e7
     function escapeHtml(text) {
         var map = {
             '&': '&amp;',
@@ -360,15 +237,6 @@
         }
     });
     
-<<<<<<< HEAD
-    // Make functions available globally for debugging
-    window.accessSSOFrontend = {
-        showError: showError,
-        showBrowserStorageWarning: showBrowserStorageWarning,
-        retrySSO: retrySSO,
-        trackEvent: trackEvent,
-        handleSessionExpired: handleSessionExpired
-=======
     // Keyboard accessibility for SSO button
     $('.access-sso-login-button').on('keydown', function(e) {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -380,8 +248,8 @@
     // Make functions available globally for debugging
     window.accessSSOFrontend = {
         showError: showError,
+        showBrowserStorageWarning: showBrowserStorageWarning,
         retrySSO: retrySSO
->>>>>>> a1e47adeca6aa8634330f6d491b594337144b3e7
     };
     
 })(jQuery);
