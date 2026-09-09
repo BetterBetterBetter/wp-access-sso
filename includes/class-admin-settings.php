@@ -107,10 +107,51 @@ class AccessSSO_Admin_Settings {
             'access_sso_detector'
         );
 
+        // Account page section (MemberPress account: manage/cancel via Access)
+        add_settings_section(
+            'access_sso_account',
+            __('Account Page', 'access-platform-sso'),
+            array($this, 'account_section_callback'),
+            $this->page_slug
+        );
+
+        add_settings_field(
+            'access_sso_manage_billing_disabled',
+            __('Disable Manage/Cancel Button', 'access-platform-sso'),
+            array($this, 'manage_billing_disabled_callback'),
+            $this->page_slug,
+            'access_sso_account'
+        );
+
+        add_settings_field(
+            'access_sso_manage_billing_text',
+            __('Button Text', 'access-platform-sso'),
+            array($this, 'manage_billing_text_callback'),
+            $this->page_slug,
+            'access_sso_account'
+        );
+
+        add_settings_field(
+            'access_sso_manage_billing_help_text',
+            __('Help Text', 'access-platform-sso'),
+            array($this, 'manage_billing_help_text_callback'),
+            $this->page_slug,
+            'access_sso_account'
+        );
+
+        add_settings_field(
+            'access_sso_manage_billing_path',
+            __('Access Path', 'access-platform-sso'),
+            array($this, 'manage_billing_path_callback'),
+            $this->page_slug,
+            'access_sso_account'
+        );
+
         // Register all options
         $settings = array(
             'platform_url', 'site_id', 'jwt_secret', 'callback_path', 'redirect_url',
-            'button_text', 'divider_text', 'enabled_form_types', 'excluded_routes', 'detector_disabled'
+            'button_text', 'divider_text', 'enabled_form_types', 'excluded_routes', 'detector_disabled',
+            'manage_billing_disabled', 'manage_billing_text', 'manage_billing_help_text', 'manage_billing_path'
         );
         foreach ($settings as $setting) {
             $args = array();
@@ -345,6 +386,35 @@ class AccessSSO_Admin_Settings {
         echo '</ul>';
     }
     
+    public function account_section_callback() {
+        echo '<p>' . __('Members billed through Access have no MemberPress subscription to cancel, so the MemberPress account page shows them nothing actionable. When enabled, the plugin adds a button on the account page that sends Access-billed members (users with the access_platform_id meta) to Access to manage or cancel. Legacy MemberPress-billed members never see it.', 'access-platform-sso') . '</p>';
+    }
+
+    public function manage_billing_disabled_callback() {
+        $value = AccessPlatformSSO::get_instance()->get_option('manage_billing_disabled', '0');
+
+        echo '<label>';
+        echo '<input type="checkbox" name="access_sso_manage_billing_disabled" value="1" ' . checked($value, '1', false) . '>';
+        echo ' ' . __('Do not show the manage/cancel button on the MemberPress account page', 'access-platform-sso');
+        echo '</label>';
+    }
+
+    public function manage_billing_text_callback() {
+        $value = AccessPlatformSSO::get_instance()->get_option('manage_billing_text', '');
+        echo '<input type="text" name="access_sso_manage_billing_text" value="' . esc_attr($value) . '" class="regular-text" placeholder="' . esc_attr__('Manage or cancel your membership', 'access-platform-sso') . '">';
+    }
+
+    public function manage_billing_help_text_callback() {
+        $value = AccessPlatformSSO::get_instance()->get_option('manage_billing_help_text', '');
+        echo '<input type="text" name="access_sso_manage_billing_help_text" value="' . esc_attr($value) . '" class="large-text" placeholder="' . esc_attr__('Your billing is handled by your Access account. Manage payment details or cancel there.', 'access-platform-sso') . '">';
+    }
+
+    public function manage_billing_path_callback() {
+        $value = AccessPlatformSSO::get_instance()->get_option('manage_billing_path', '/subscriptions');
+        echo '<input type="text" name="access_sso_manage_billing_path" value="' . esc_attr($value) . '" class="regular-text" placeholder="/subscriptions">';
+        echo '<p class="description">' . __('Path on the Access Platform the button links to. Default: /subscriptions (the member\'s subscription list, which has Manage Billing and Cancel).', 'access-platform-sso') . '</p>';
+    }
+
     public function detector_disabled_callback() {
         $value = AccessPlatformSSO::get_instance()->get_option('detector_disabled', '0');
         

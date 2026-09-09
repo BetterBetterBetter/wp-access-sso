@@ -89,6 +89,20 @@
     const processedForms = new WeakSet();
 
     /**
+     * The main SSO script performs the browser capability preflight. If it is
+     * absent or failed to initialize, preserve the detector's existing behavior.
+     */
+    function isBrowserSupported() {
+        try {
+            const support = window.AccessSSOBrowserSupport;
+            return !support || typeof support.isAvailable !== 'function' || support.isAvailable();
+        } catch (error) {
+            console.warn('Access SSO: Browser support check failed; preserving the existing form detector flow.', error);
+            return true;
+        }
+    }
+
+    /**
      * Build the SSO login URL
      */
     function buildSSOUrl() {
@@ -115,6 +129,8 @@
      * Create the SSO button element
      */
     function createSSOButton(formType = 'generic') {
+        if (!isBrowserSupported()) return null;
+
         const ssoUrl = buildSSOUrl();
         if (!ssoUrl) return null;
 
@@ -250,6 +266,8 @@
      * Detect and enhance all login forms on the page
      */
     function detectAndEnhanceForms() {
+        if (!isBrowserSupported()) return 0;
+
         let formsEnhanced = 0;
 
         // Get enabled form types from config
@@ -383,6 +401,14 @@
      * Initialize the detector
      */
     function init() {
+        if (!isBrowserSupported()) {
+            const support = window.AccessSSOBrowserSupport;
+            if (support && typeof support.showWarning === 'function') {
+                support.showWarning();
+            }
+            return;
+        }
+
         // Don't run if user is already logged in (unless config says otherwise)
         if (!config.show_when_logged_in && document.body.classList.contains('logged-in')) {
             console.log('Access SSO: User already logged in, skipping form detection');

@@ -3,7 +3,7 @@
  * Plugin Name: Access Platform SSO
  * Plugin URI: https://github.com/BetterBetterBetter/wp-access-sso
  * Description: Single Sign-On integration with Access Platform (Supabase Auth)
- * Version: 1.1.8
+ * Version: 1.1.9
  * Author: Access Platform Team
  * License: GPL v2 or later
  * Text Domain: access-platform-sso
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ACCESS_SSO_VERSION', '1.1.8');
+define('ACCESS_SSO_VERSION', '1.1.9');
 define('ACCESS_SSO_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ACCESS_SSO_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -77,6 +77,12 @@ class AccessPlatformSSO {
         // Login form customization
         add_action('login_form', array($this, 'add_sso_login_button'));
         add_filter('login_message', array($this, 'add_sso_login_message'));
+
+        // MemberPress account page: Access-billed members have no MemberPress
+        // subscription to cancel, so give them a button that goes to Access.
+        // The PHP hook renders a nav item when MemberPress exposes it; the
+        // enqueued detector script covers themes/templates that do not.
+        add_action('mepr_account_nav', array($this, 'render_account_manage_nav'));
     }
     
     public function init() {
@@ -135,6 +141,77 @@ class AccessPlatformSSO {
         );
         
         wp_localize_script('access-sso-detector', 'accessSSODetector', $detector_config);
+
+        // Account page "manage or cancel" button for Access-billed members only
+        if ($this->should_show_account_manage_button()) {
+            wp_enqueue_script(
+                'access-sso-account-manage',
+                ACCESS_SSO_PLUGIN_URL . 'assets/js/account-manage-detector.js',
+                array(),
+                ACCESS_SSO_VERSION,
+                true
+            );
+            wp_localize_script('access-sso-account-manage', 'accessSSOAccountManage', array(
+                'manage_url' => $this->get_manage_billing_url(),
+                'button_text' => $this->get_manage_billing_button_text(),
+                'help_text' => $this->get_manage_billing_help_text(),
+            ));
+        }
+    }
+
+    /**
+     * Whether the current visitor is a WordPress user whose membership is
+     * billed through Access. Set by the user provisioner on every SSO login.
+     */
+    public function is_access_managed_user($user_id = 0) {
+        $user_id = $user_id ? (int) $user_id : get_current_user_id();
+        if (!$user_id) {
+            return false;
+        }
+        return get_user_meta($user_id, 'access_platform_id', true) !== '';
+    }
+
+    private function should_show_account_manage_button() {
+        if ($this->get_option('manage_billing_disabled', '0') === '1') {
+            return false;
+        }
+        if (empty($this->get_option('platform_url', ''))) {
+            return false;
+        }
+        return is_user_logged_in() && $this->is_access_managed_user();
+    }
+
+    /**
+     * Where Access-billed members manage or cancel. Access owns billing, so
+     * this deliberately does not touch MemberPress subscriptions.
+     */
+    public function get_manage_billing_url() {
+        $platform_url = rtrim($this->get_option('platform_url', ''), '/');
+        $path = '/' . ltrim($this->get_option('manage_billing_path', '/subscriptions'), '/');
+        return $platform_url . $path;
+    }
+
+    public function get_manage_billing_button_text() {
+        $text = $this->get_option('manage_billing_text', '');
+        return $text !== '' ? $text : __('Manage or cancel your membership', 'access-platform-sso');
+    }
+
+    public function get_manage_billing_help_text() {
+        $text = $this->get_option('manage_billing_help_text', '');
+        return $text !== '' ? $text : __('Your billing is handled by your Access account. Manage payment details or cancel there.', 'access-platform-sso');
+    }
+
+    /**
+     * MemberPress `mepr_account_nav` action: add a nav item pointing at Access.
+     */
+    public function render_account_manage_nav() {
+        if (!$this->should_show_account_manage_button()) {
+            return;
+        }
+        echo '<span class="mepr-nav-item access-manage-billing-nav">';
+        echo '<a href="' . esc_url($this->get_manage_billing_url()) . '" class="access-manage-billing-link" data-access-manage-billing="1">';
+        echo esc_html($this->get_manage_billing_button_text());
+        echo '</a></span>';
     }
     
     /**
