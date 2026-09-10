@@ -35,6 +35,24 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertIn("consume_login_state", MAIN)
         self.assertNotIn("Nonce is best-effort", MAIN)
 
+    def test_state_cookie_survives_managed_host_cookie_stripping(self):
+        # WP Engine forwards only wordpress_/wp- prefixed cookies on cacheable URLs.
+        self.assertIn("const STATE_COOKIE = 'wordpress_access_sso_state';", MAIN)
+
+    def test_state_logins_return_through_uncached_admin_post_endpoint(self):
+        self.assertIn("admin_post_nopriv_access_sso_callback", MAIN)
+        self.assertIn("admin_post_access_sso_callback", MAIN)
+        self.assertIn("function get_state_callback_url", MAIN)
+        self.assertIn("'action' => 'access_sso_callback'", MAIN)
+        self.assertIn("add_query_arg('state', $state, $this->get_state_callback_url())", MAIN)
+        self.assertNotIn("add_query_arg('state', $state, $this->get_callback_url())", MAIN)
+
+    def test_stateless_launch_honors_signed_landing_page_same_site_only(self):
+        self.assertIn("function get_signed_landing_url", MAIN)
+        self.assertIn("$this->get_safe_redirect_url($this->get_signed_landing_url($claims), $default_redirect)", MAIN)
+        # Only after the JWT and stateless handoff were validated.
+        self.assertLess(MAIN.index("is_valid_stateless_handoff($claims)"), MAIN.index("get_signed_landing_url($claims)"))
+
     def test_callback_tokens_are_single_use_and_time_bounded(self):
         self.assertIn("consume_token_once", JWT)
         self.assertIn("Token issued-at missing", JWT)

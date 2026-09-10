@@ -275,6 +275,10 @@ This plugin is licensed under GPL v2 or later.
 
 ## Changelog
 
+### Version 1.2.2
+- Fixed site-initiated "Login with Access" on hosts that strip cookies from cacheable URLs (WP Engine): the browser-bound state cookie is now `wordpress_access_sso_state` and state logins return through the uncached `admin-post.php?action=access_sso_callback` endpoint instead of the front page
+- Access-initiated dashboard launches now land on the page Access configured for the site (the signed `redirect_to`), same-site only, instead of always the plugin's default redirect
+
 ### Version 1.2.1
 - Fixed the account-page banner being injected inside the MemberPress nav (it split the tabs into two rows) and removed the extra nav tab; the banner now renders as a single card directly under the nav
 - Restyled the banner: neutral card, inherits the page font, compact primary button, stacks on narrow screens

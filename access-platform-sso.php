@@ -3,7 +3,7 @@
  * Plugin Name: Access Platform SSO
  * Plugin URI: https://github.com/BetterBetterBetter/wp-access-sso
  * Description: Single Sign-On integration with Access Platform (Supabase Auth)
- * Version: 1.2.1
+ * Version: 1.2.2
  * Author: Access Platform Team
  * License: GPL v2 or later
  * Text Domain: access-platform-sso
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ACCESS_SSO_VERSION', '1.2.1');
+define('ACCESS_SSO_VERSION', '1.2.2');
 define('ACCESS_SSO_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ACCESS_SSO_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -43,7 +43,9 @@ class AccessPlatformSSO {
     const IMPERSONATION_COOKIE = 'access_sso_impersonation';
     const IMPERSONATION_TRANSIENT_PREFIX = 'access_sso_impersonation_';
     const IMPERSONATION_TTL = 86400;
-    const STATE_COOKIE = 'access_sso_state';
+    // Prefixed with `wordpress_` because managed hosts (WP Engine) strip every other
+    // cookie from requests to cacheable URLs before PHP sees them.
+    const STATE_COOKIE = 'wordpress_access_sso_state';
     const STATE_TRANSIENT_PREFIX = 'access_sso_state_';
     const STATE_TTL = 600;
     const RATE_LIMIT_PREFIX = 'access_sso_rate_';
@@ -70,6 +72,8 @@ class AccessPlatformSSO {
         // SSO Authentication hooks
         add_action('admin_post_nopriv_access_sso_start', array($this, 'handle_sso_start'));
         add_action('admin_post_access_sso_start', array($this, 'handle_sso_start'));
+        add_action('admin_post_nopriv_access_sso_callback', array($this, 'handle_sso_callback'));
+        add_action('admin_post_access_sso_callback', array($this, 'handle_sso_callback'));
         add_action('init', array($this, 'handle_sso_callback'));
         add_action('init', array($this, 'handle_impersonation_exit'));
         add_action('wp_login', array($this, 'handle_wp_login'), 10, 2);
@@ -323,7 +327,7 @@ class AccessPlatformSSO {
         $requested_redirect = isset($_GET['return_to']) ? wp_unslash($_GET['return_to']) : '';
         $redirect_url = $this->get_safe_redirect_url($requested_redirect, $default_redirect);
         $state = $this->create_login_state($redirect_url);
-        $callback_url = add_query_arg('state', $state, $this->get_callback_url());
+        $callback_url = add_query_arg('state', $state, $this->get_state_callback_url());
         $sso_url = $this->build_platform_login_url($callback_url);
 
         wp_redirect($sso_url, 302, 'Access Platform SSO');
@@ -377,6 +381,12 @@ class AccessPlatformSSO {
         // WordPress login buttons always use the browser-bound state flow above.
         if (empty($state) && !$this->is_valid_stateless_handoff($claims)) {
             wp_die(__('This sign-in request is missing its security state. Please start again.', 'access-platform-sso'), '', array('response' => 400));
+        }
+
+        if (empty($state)) {
+            // Access signs the landing page it wants (`redirect_to` inside the callback
+            // URL claim); honor it when it stays on this site, else keep the plugin default.
+            $redirect_url = $this->get_safe_redirect_url($this->get_signed_landing_url($claims), $default_redirect);
         }
 
         $impersonation_context = $this->extract_impersonation_context($claims);
@@ -619,6 +629,22 @@ class AccessPlatformSSO {
     }
 
     /**
+     * Callback for browser-bound (state) logins. admin-post.php is never page
+     * cached, so the state cookie reaches PHP on hosts that strip cookies from
+     * cacheable front-end URLs (WP Engine). Access-initiated dashboard launches
+     * keep using get_callback_url().
+     */
+    public function get_state_callback_url() {
+        return add_query_arg(
+            array(
+                'action' => 'access_sso_callback',
+                'access_sso_callback' => '1',
+            ),
+            admin_url('admin-post.php')
+        );
+    }
+
+    /**
      * Return the uncached WordPress endpoint that creates browser-bound SSO state.
      */
     public function get_login_url($redirect_to = '') {
@@ -739,6 +765,21 @@ class AccessPlatformSSO {
         if ($expiration > time() && !empty($value)) {
             $_COOKIE[self::STATE_COOKIE] = $value;
         }
+    }
+
+    /**
+     * Landing page requested by Access for a dashboard launch: the `redirect_to`
+     * query argument of the signed `redirect_url` claim. Empty when absent.
+     */
+    private function get_signed_landing_url($claims) {
+        if (empty($claims['redirect_url']) || !is_string($claims['redirect_url'])) {
+            return '';
+        }
+
+        $query = wp_parse_url($claims['redirect_url'], PHP_URL_QUERY);
+        parse_str((string) $query, $query_args);
+
+        return isset($query_args['redirect_to']) && is_string($query_args['redirect_to']) ? $query_args['redirect_to'] : '';
     }
 
     private function is_valid_stateless_handoff($claims) {
