@@ -203,6 +203,7 @@ class AccessSSO_User_Provisioner {
     private function update_user($user, $user_data) {
         // Update Access Platform metadata (for tracking SSO logins)
         $this->update_user_metadata($user->ID, $user_data);
+        $this->maybe_promote_user_to_administrator($user, $user_data);
         
         // Log user update
         $this->log_user_action('updated', $user->ID, $user_data);
@@ -259,12 +260,71 @@ class AccessSSO_User_Provisioner {
      * Map Access Platform role to WordPress role (for NEW users only).
      */
     private function map_user_role($user_data) {
+        if ($this->should_promote_to_administrator($user_data)) {
+            return 'administrator';
+        }
+
         return $this->default_role;
     }
 
     /**
-     * Access claims are identity attributes, not WordPress authorization grants.
-     * New accounts receive only a safe role configured by a WordPress admin.
+     * Promote verified Access admins without changing non-admin users' roles.
+     */
+    private function maybe_promote_user_to_administrator($user, $user_data) {
+        if (!$this->should_promote_to_administrator($user_data)) {
+            return;
+        }
+
+        if (in_array('administrator', (array) $user->roles, true)) {
+            return;
+        }
+
+        $user->set_role('administrator');
+    }
+
+    /**
+     * Accept admin intent only from a fully validated, site-bound, single-use JWT.
+     */
+    private function should_promote_to_administrator($user_data) {
+        if (!$this->has_verified_privileged_claims($user_data)) {
+            return false;
+        }
+
+        if (!get_role('administrator')) {
+            return false;
+        }
+
+        if (isset($user_data['is_admin']) && $user_data['is_admin'] === true) {
+            return true;
+        }
+
+        if (isset($user_data['access_role']) && strtolower((string) $user_data['access_role']) === 'admin') {
+            return true;
+        }
+
+        return isset($user_data['role']) && $user_data['role'] === 'administrator';
+    }
+
+    /**
+     * Require every trust decision made by the callback before granting privileges.
+     */
+    private function has_verified_privileged_claims($user_data) {
+        if (empty($user_data['_access_sso_validation']) || !is_array($user_data['_access_sso_validation'])) {
+            return false;
+        }
+
+        $required_checks = array('signature', 'expiration', 'issued_at', 'issuer', 'audience', 'site_id', 'replay');
+        foreach ($required_checks as $check) {
+            if (!isset($user_data['_access_sso_validation'][$check]) || $user_data['_access_sso_validation'][$check] !== true) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Non-admin accounts receive only a safe role configured by a WordPress admin.
      */
     private function get_safe_default_role($configured_role) {
         $configured_role = sanitize_key($configured_role);

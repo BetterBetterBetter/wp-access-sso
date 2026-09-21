@@ -190,7 +190,7 @@ This plugin works with your existing Access Platform JWT endpoint at `/api/sso/j
 
 ## Identity and Authorization Boundary
 
-Access authenticates the person and supplies signed identity claims. It does not grant WordPress roles, MemberPress memberships, course access, or administrator permissions. Existing WordPress users retain their local roles; new SSO users receive only the site's safe non-privileged default role (falling back to `subscriber`). Authorization remains in WordPress and MemberPress.
+Access authenticates the person and supplies signed identity claims. A fully validated, site-bound, single-use SSO token may promote an Access administrator to WordPress `administrator`; non-admin claims never downgrade or otherwise replace an existing WordPress role. New non-admin SSO users receive only the site's safe non-privileged default role (falling back to `subscriber`). MemberPress memberships, course access, and all other authorization remain in WordPress and MemberPress. Admin promotion is applied when the user next signs in to each attached site through Access SSO.
 
 ## Security Features
 

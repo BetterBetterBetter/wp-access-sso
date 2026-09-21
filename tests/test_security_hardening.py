@@ -42,9 +42,12 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertIn("$user_data['verified']['replay'] = true", MAIN)
         self.assertIn("array('response' => 401)", MAIN)
 
-    def test_access_claims_never_grant_wordpress_admin(self):
-        self.assertNotIn("set_role('administrator')", PROVISIONER)
-        self.assertNotIn("should_promote_to_administrator", PROVISIONER)
+    def test_only_fully_verified_access_admin_claims_grant_wordpress_admin(self):
+        self.assertIn("set_role('administrator')", PROVISIONER)
+        self.assertIn("should_promote_to_administrator", PROVISIONER)
+        self.assertIn("has_verified_privileged_claims", PROVISIONER)
+        self.assertIn("'site_id', 'replay'", PROVISIONER)
+        self.assertIn("$user_data['is_admin'] === true", PROVISIONER)
         self.assertIn("get_safe_default_role", PROVISIONER)
         self.assertIn("'edit_posts'", PROVISIONER)
         self.assertIn("'manage_woocommerce'", PROVISIONER)

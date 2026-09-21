@@ -131,14 +131,18 @@ class SiteIdSafetyTests(unittest.TestCase):
         self.assertNotIn("Host matched; accept despite ID mismatch", source)
         self.assertNotIn("redirect_url host matches this WordPress host", source)
 
-    def test_access_claims_cannot_change_wordpress_roles(self):
+    def test_verified_access_admin_claims_promote_without_downgrade(self):
         source = read(USER_PROVISIONER)
 
-        self.assertNotIn("should_promote_to_administrator", source)
-        self.assertNotIn("maybe_promote_user_to_administrator", source)
-        self.assertNotIn("$user->set_role('administrator')", source)
+        self.assertIn("should_promote_to_administrator", source)
+        self.assertIn("maybe_promote_user_to_administrator", source)
+        self.assertIn("$user->set_role('administrator')", source)
+        self.assertIn("$user_data['is_admin'] === true", source)
+        self.assertIn("$user_data['access_role']) && strtolower((string) $user_data['access_role']) === 'admin'", source)
+        self.assertIn("$user_data['role']) && $user_data['role'] === 'administrator'", source)
+        self.assertIn("array('signature', 'expiration', 'issued_at', 'issuer', 'audience', 'site_id', 'replay')", source)
         self.assertIn("get_safe_default_role", source)
-        self.assertIn("return 'subscriber'", source)
+        self.assertIn("return $this->default_role", source)
 
     def test_sso_callback_passes_verified_claims_before_redirecting(self):
         source = read(MAIN_PLUGIN)
