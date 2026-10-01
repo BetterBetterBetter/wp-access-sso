@@ -6,8 +6,8 @@
  * finds the MemberPress account page and adds one banner, directly below the
  * account nav, with a "manage or cancel" button that sends them to Access.
  *
- * Only enqueued for logged-in users with the `access_platform_id` user meta
- * (see access-platform-sso.php). The banner is never placed inside the nav:
+ * Only enqueued for logged-in users with an Access-billed MemberPress
+ * subscription (see AccessSSO_Billing_Owner). The banner is never placed inside the nav:
  * MemberPress lays the nav out with flex-wrap, and anything injected between
  * its tabs breaks the row.
  */

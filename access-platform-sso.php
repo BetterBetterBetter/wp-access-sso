@@ -24,6 +24,7 @@ require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-jwt-validator.php';
 require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-user-provisioner.php';
 require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-session-manager.php';
 require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-admin-settings.php';
+require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-billing-owner.php';
 
 // Plugin Update Checker - GitHub integration
 if (file_exists(ACCESS_SSO_PLUGIN_DIR . 'plugin-update-checker/plugin-update-checker.php')) {
@@ -197,15 +198,29 @@ class AccessPlatformSSO {
     }
 
     /**
-     * Whether the current visitor is a WordPress user whose membership is
-     * billed through Access. Set by the user provisioner on every SSO login.
+     * Whether the user has a MemberPress subscription billed through Access.
+     * Decided by who bills the subscription, not by SSO link metadata, which
+     * every Access login (including admin impersonation) writes.
      */
     public function is_access_managed_user($user_id = 0) {
         $user_id = $user_id ? (int) $user_id : get_current_user_id();
         if (!$user_id) {
             return false;
         }
-        return get_user_meta($user_id, 'access_platform_id', true) !== '';
+        return AccessSSO_Billing_Owner::has_access_billed_subscription($this->get_memberpress_subscriptions($user_id));
+    }
+
+    private function get_memberpress_subscriptions($user_id) {
+        if (!class_exists('MeprSubscription')) {
+            return array();
+        }
+        global $wpdb;
+        $table = $wpdb->prefix . 'mepr_subscriptions';
+        $rows = $wpdb->get_results(
+            $wpdb->prepare("SELECT gateway, subscr_id, status FROM {$table} WHERE user_id = %d", $user_id),
+            ARRAY_A
+        );
+        return is_array($rows) ? $rows : array();
     }
 
     private function should_show_account_manage_button() {
