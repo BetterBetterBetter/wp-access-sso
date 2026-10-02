@@ -28,6 +28,15 @@ class AccountManageButtonTests(unittest.TestCase):
         self.assertIn("AccessSSO_Billing_Owner::has_access_billed_subscription(", source)
         self.assertIn("return is_user_logged_in() && $this->is_access_managed_user();", source)
 
+    def test_subscription_lookup_never_prints_db_errors(self):
+        # Runs on every front-end page; a missing MemberPress table must not
+        # surface a database error in the page when errors are displayed.
+        source = read(MAIN_PLUGIN)
+        lookup = source.split("private function get_memberpress_subscriptions(", 1)[1].split("\n    }\n", 1)[0]
+
+        self.assertIn("$suppressed = $wpdb->suppress_errors(true);", lookup)
+        self.assertIn("$wpdb->suppress_errors($suppressed);", lookup)
+
     def test_gate_ignores_sso_link_metadata(self):
         # access_platform_id is written on every Access SSO login (including
         # admin impersonation), so it says nothing about who bills the member.

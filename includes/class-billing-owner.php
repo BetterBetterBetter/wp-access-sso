@@ -27,11 +27,22 @@ class AccessSSO_Billing_Owner {
     }
 
     public static function has_access_billed_subscription(array $subscriptions) {
+        $has_cancelled_access = false;
+        $has_active_memberpress = false;
         foreach ($subscriptions as $subscription) {
+            $status = isset(((array) $subscription)['status']) ? (string) ((array) $subscription)['status'] : '';
             if (self::is_access_billed_subscription($subscription)) {
-                return true;
+                if ($status !== 'cancelled') {
+                    return true;
+                }
+                $has_cancelled_access = true;
+            } elseif ($status === 'active') {
+                $has_active_memberpress = true;
             }
         }
-        return false;
+        // A cancelled Access subscription only points the member at Access when
+        // MemberPress isn't billing them now; otherwise the banner would send
+        // them to cancel somewhere that no longer bills them.
+        return $has_cancelled_access && !$has_active_memberpress;
     }
 }

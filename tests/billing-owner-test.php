@@ -41,6 +41,13 @@ check('no subscriptions gets no banner', false,
     AccessSSO_Billing_Owner::has_access_billed_subscription(array()));
 check('MemberPress subscription objects are accepted', true,
     AccessSSO_Billing_Owner::has_access_billed_subscription(array((object) $access)));
+$cancelled_access = array_merge($access, array('status' => 'cancelled'));
+check('cancelled Access sub + active MemberPress-billed sub: MemberPress now bills them, no banner', false,
+    AccessSSO_Billing_Owner::has_access_billed_subscription(array($cancelled_access, $native)));
+check('cancelled Access sub + cancelled MemberPress sub: Access is still where they left, banner', true,
+    AccessSSO_Billing_Owner::has_access_billed_subscription(array($cancelled_access, array_merge($native, array('status' => 'cancelled')))));
+check('suspended (paused) Access sub keeps the banner even with an active MemberPress sub', true,
+    AccessSSO_Billing_Owner::has_access_billed_subscription(array(array_merge($access, array('status' => 'suspended')), $native)));
 check('gateway match is exact (no partial "manual" matches)', false,
     AccessSSO_Billing_Owner::has_access_billed_subscription(array(array_merge($access, array('gateway' => 'manual-test')))));
 

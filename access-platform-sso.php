@@ -216,10 +216,12 @@ class AccessPlatformSSO {
         }
         global $wpdb;
         $table = $wpdb->prefix . 'mepr_subscriptions';
+        $suppressed = $wpdb->suppress_errors(true);
         $rows = $wpdb->get_results(
             $wpdb->prepare("SELECT gateway, subscr_id, status FROM {$table} WHERE user_id = %d", $user_id),
             ARRAY_A
         );
+        $wpdb->suppress_errors($suppressed);
         return is_array($rows) ? $rows : array();
     }
 

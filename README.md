@@ -111,6 +111,9 @@ Only logged-in users with a MemberPress subscription billed by Access: gateway
 Access provisions with), in any status except `pending`. Legacy members billed
 by MemberPress's own Stripe gateway never see the button, so their normal
 cancel flow is untouched; MemberPress admin comps (`mp-sub-…`) don't count.
+A cancelled Access subscription only counts while no other subscription is
+active, so a member who left Access and now pays through MemberPress isn't sent
+to Access to cancel.
 
 The `access_platform_id` user meta is not used for this. The provisioner writes
 it on every SSO login, including admin "Login as" impersonation, so it only
