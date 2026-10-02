@@ -155,6 +155,16 @@ the MemberPress API.
 
 ## Usage
 
+### Library return URLs
+
+The uncached SSO start URL must preserve the complete same-site WordPress
+authorization URL inside `return_to`, including its PKCE challenge, state,
+callback, and empty scope. Pre-encode nested URLs passed to WordPress
+`add_query_arg()`; otherwise their query parameters become outer SSO parameters
+and the return request is rejected. External destinations still fall back to
+the WordPress home URL. Run `python3 -m unittest discover -s tests` to verify
+the round-trip and redirect-safety regression contracts.
+
 ### For End Users
 
 1. Visit any WordPress site with the plugin installed
