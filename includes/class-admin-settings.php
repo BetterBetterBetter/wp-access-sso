@@ -400,7 +400,7 @@ class AccessSSO_Admin_Settings {
     }
     
     public function account_section_callback() {
-        echo '<p>' . __('Members billed through Access have no MemberPress subscription to cancel, so the MemberPress account page shows them nothing actionable. When enabled, the plugin adds a button on the account page that sends Access-billed members (users with the access_platform_id meta) to Access to manage or cancel. Legacy MemberPress-billed members never see it.', 'access-platform-sso') . '</p>';
+        echo '<p>' . __('Members billed through Access have no MemberPress subscription to cancel, so the MemberPress account page shows them nothing actionable. When enabled, the plugin adds a button on the account page that sends Access-billed members (users with a MemberPress subscription provisioned by Access) to Access to manage or cancel. Legacy MemberPress-billed members never see it.', 'access-platform-sso') . '</p>';
     }
 
     public function manage_billing_disabled_callback() {

@@ -106,9 +106,18 @@ a clearly labelled button that sends those members to Access.
 
 ### Who sees it
 
-Only logged-in users with the `access_platform_id` user meta, which the
-provisioner writes on every SSO login. Legacy members who pay through
-MemberPress never see the button, so their normal cancel flow is untouched.
+Only logged-in users with a MemberPress subscription billed by Access: gateway
+`manual` and a `subscr_id` starting with `sub_` (the Stripe subscription id
+Access provisions with), in any status except `pending`. Legacy members billed
+by MemberPress's own Stripe gateway never see the button, so their normal
+cancel flow is untouched; MemberPress admin comps (`mp-sub-…`) don't count.
+A cancelled Access subscription only counts while no other subscription is
+active or paused, so a member who left Access and now pays through MemberPress
+isn't sent to Access to cancel.
+
+The `access_platform_id` user meta is not used for this. The provisioner writes
+it on every SSO login, including admin "Login as" impersonation, so it only
+says a user has used Access, not who bills them.
 
 ### How it renders
 
@@ -274,6 +283,9 @@ For support and bug reports, please contact your Access Platform administrator o
 This plugin is licensed under GPL v2 or later.
 
 ## Changelog
+
+### Unreleased
+- Fixed the account-page banner showing for legacy MemberPress-billed members. The gate now checks who bills the member's MemberPress subscriptions (Access: gateway `manual` with a `sub_` subscr_id) instead of the `access_platform_id` meta, which every SSO login sets. Access-billed members who log in with a WordPress password now see the banner too.
 
 ### Version 1.2.2
 - Fixed site-initiated "Login with Access" on hosts that strip cookies from cacheable URLs (WP Engine): the browser-bound state cookie is now `wordpress_access_sso_state` and state logins return through the uncached `admin-post.php?action=access_sso_callback` endpoint instead of the front page
