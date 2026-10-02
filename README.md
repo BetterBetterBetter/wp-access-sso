@@ -284,8 +284,10 @@ This plugin is licensed under GPL v2 or later.
 
 ## Changelog
 
-### Unreleased
+### Version 1.2.4
 - Fixed the account-page banner showing for legacy MemberPress-billed members. The gate now checks who bills the member's MemberPress subscriptions (Access: gateway `manual` with a `sub_` subscr_id) instead of the `access_platform_id` meta, which every SSO login sets. Access-billed members who log in with a WordPress password now see the banner too.
+- A cancelled Access subscription no longer shows the banner while another subscription is active or paused, so members MemberPress now bills aren't sent to Access to cancel.
+- The account-page subscription lookup never prints a database error into the page.
 
 ### Version 1.2.2
 - Fixed site-initiated "Login with Access" on hosts that strip cookies from cacheable URLs (WP Engine): the browser-bound state cookie is now `wordpress_access_sso_state` and state logins return through the uncached `admin-post.php?action=access_sso_callback` endpoint instead of the front page
