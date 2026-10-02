@@ -30,13 +30,15 @@ class AccessSSO_Billing_Owner {
         $has_cancelled_access = false;
         $has_active_memberpress = false;
         foreach ($subscriptions as $subscription) {
-            $status = isset(((array) $subscription)['status']) ? (string) ((array) $subscription)['status'] : '';
-            if (self::is_access_billed_subscription($subscription)) {
+            $fields = (array) $subscription;
+            $status = isset($fields['status']) ? (string) $fields['status'] : '';
+            if (self::is_access_billed_subscription($fields)) {
                 if ($status !== 'cancelled') {
                     return true;
                 }
                 $has_cancelled_access = true;
-            } elseif ($status === 'active') {
+            } elseif ($status === 'active' || $status === 'suspended') {
+                // Suspended is a paused subscription: still billed by MemberPress.
                 $has_active_memberpress = true;
             }
         }
