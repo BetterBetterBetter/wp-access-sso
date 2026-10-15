@@ -207,13 +207,21 @@ The endpoint exposes only these read tools:
 - `access_sso_get_transactions`
 - `access_sso_list_products`
 - `access_sso_get_site`
+- `access_sso_get_inventory`
+- `access_sso_list_plugins`
+- `access_sso_list_themes`
+- `access_sso_search_content`
+- `access_sso_get_health`
+- `access_sso_get_logs`
+- `access_sso_get_database_schema`
 
-It does not expose arbitrary REST, SQL, MemberPress writes, credentials, or
-provider keys. Access remains the public agent-facing MCP gateway and calls
-this endpoint from the server side. If the official WordPress MCP Adapter
-plugin is installed, the same abilities are also registered on a private
-custom adapter server; the broad default adapter server is not used for these
-tools.
+Content, logs, and database results are bounded. Log secrets are redacted,
+database access is limited to table and column metadata, and the endpoint does
+not expose arbitrary REST, SQL, MemberPress writes, credentials, or provider
+keys. Access remains the public agent-facing MCP gateway and calls this
+endpoint from the server side. If the official WordPress MCP Adapter plugin
+is installed, the same abilities are also registered on a private custom
+adapter server; the broad default adapter server is not used for these tools.
 
 ### Example JWT Payload
 

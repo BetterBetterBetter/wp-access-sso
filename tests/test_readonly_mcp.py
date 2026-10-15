@@ -11,7 +11,7 @@ class ReadonlyMcpTests(unittest.TestCase):
     def test_plugin_loads_private_mcp_bridge(self):
         self.assertIn("class-readonly-mcp.php", MAIN)
         self.assertIn("AccessSSO_Readonly_MCP::get_instance();", MAIN)
-        self.assertIn("Version: 1.3.0", MAIN)
+        self.assertIn("Version: 1.4.0", MAIN)
 
     def test_endpoint_is_signed_site_bound_and_replay_protected(self):
         self.assertIn("register_rest_route(self::ROUTE_NAMESPACE, self::ROUTE", MCP)
@@ -32,6 +32,13 @@ class ReadonlyMcpTests(unittest.TestCase):
             "access_sso_get_transactions",
             "access_sso_list_products",
             "access_sso_get_site",
+            "access_sso_get_inventory",
+            "access_sso_list_plugins",
+            "access_sso_list_themes",
+            "access_sso_search_content",
+            "access_sso_get_health",
+            "access_sso_get_logs",
+            "access_sso_get_database_schema",
         )
         for name in expected:
             self.assertIn("'name' => '" + name + "'", MCP)
@@ -44,6 +51,16 @@ class ReadonlyMcpTests(unittest.TestCase):
         self.assertNotIn("INSERT ", MCP)
         self.assertNotIn("UPDATE ", MCP)
         self.assertNotIn("DELETE FROM", MCP)
+        self.assertIn("SHOW TABLE STATUS", MCP)
+        self.assertIn("DESCRIBE `{$name}`", MCP)
+        self.assertNotIn("$wpdb->query(", MCP)
+
+    def test_diagnostic_data_is_bounded_and_logs_are_redacted(self):
+        self.assertIn("posts_per_page' => $per_page", MCP)
+        self.assertIn("'content' => $this->truncate_text", MCP)
+        self.assertIn("redact_log_line", MCP)
+        self.assertIn("REDACTED_JWT", MCP)
+        self.assertIn("min(200", MCP)
 
     def test_adapter_integration_is_optional_and_uses_custom_server(self):
         self.assertIn("function_exists('wp_register_ability')", MCP)
@@ -51,6 +68,8 @@ class ReadonlyMcpTests(unittest.TestCase):
         self.assertIn("access-sso-readonly", MCP)
         self.assertIn("WP\\\\MCP\\\\Transport\\\\HttpTransport", MCP)
         self.assertIn("'access-sso/get-member'", MCP)
+        self.assertIn("'access-sso/get-inventory'", MCP)
+        self.assertIn("'access-sso/get-database-schema'", MCP)
         self.assertIn("'public' => false", MCP)
 
 
