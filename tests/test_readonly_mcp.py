@@ -64,6 +64,7 @@ class ReadonlyMcpTests(unittest.TestCase):
 
     def test_adapter_integration_is_optional_and_uses_custom_server(self):
         self.assertIn("function_exists('wp_register_ability')", MCP)
+        self.assertIn("function_exists('wp_has_ability')", MCP)
         self.assertIn("add_action('mcp_adapter_init'", MCP)
         self.assertIn("access-sso-readonly", MCP)
         self.assertIn("WP\\\\MCP\\\\Transport\\\\HttpTransport", MCP)

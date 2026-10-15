@@ -325,7 +325,13 @@ class AccessSSO_Readonly_MCP {
         }
 
         if (is_wp_error($value)) {
-            return $this->json_rpc_error($id, -32000, $value->get_error_message(), 500);
+            $input_error = in_array($value->get_error_code(), array('invalid_table'), true);
+            return $this->json_rpc_error(
+                $id,
+                $input_error ? -32602 : -32000,
+                $value->get_error_message(),
+                $input_error ? 400 : 500
+            );
         }
 
         return $this->json_result($id, array(
@@ -833,7 +839,9 @@ class AccessSSO_Readonly_MCP {
         );
 
         foreach ($abilities as $name => $config) {
-            if (function_exists('wp_get_ability') && wp_get_ability($name)) {
+            // Use the dedicated existence check. Calling wp_get_ability() for a
+            // missing name emits a doing-it-wrong notice on current WordPress.
+            if (function_exists('wp_has_ability') && wp_has_ability($name)) {
                 continue;
             }
             $config['category'] = 'site';
