@@ -11,6 +11,7 @@ A comprehensive Single Sign-On (SSO) plugin that integrates WordPress sites with
 - **Security Features**: Browser-bound login state, single-use short-lived JWTs, rate limiting, and redacted diagnostics
 - **Professional Admin Interface**: Easy-to-use configuration and monitoring dashboard
 - **Login Form Detection**: Automatically detects and enhances login forms from MemberPress, LearnDash, WooCommerce, and more
+- **Private Read-only MCP**: Allows the Access platform to read bounded site data without exposing WordPress credentials or write-capable tools
 
 ## Installation
 
@@ -189,6 +190,30 @@ This plugin works with your existing Access Platform JWT endpoint at `/api/sso/j
 2. Include user identity data and the required trust claims (`iss`, `aud`, `site_id`, `iat`, and `exp`)
 3. Sign tokens with the shared JWT secret
 4. Handle token validation requests
+
+## Private read-only MCP
+
+When the canonical site ID has been verified, the plugin exposes a private
+MCP-compatible endpoint at `/wp-json/access-sso/v1/mcp`. It accepts only
+server-to-server requests signed with the existing site-bound SSO secret using
+the `X-Access-Site-Id`, `X-Access-MCP-Timestamp`, `X-Access-MCP-Nonce`, and
+`X-Access-MCP-Signature` headers. Requests are timestamp-bounded and nonce
+replay protected.
+
+The endpoint exposes only these read tools:
+
+- `access_sso_get_member`
+- `access_sso_get_memberships`
+- `access_sso_get_transactions`
+- `access_sso_list_products`
+- `access_sso_get_site`
+
+It does not expose arbitrary REST, SQL, MemberPress writes, credentials, or
+provider keys. Access remains the public agent-facing MCP gateway and calls
+this endpoint from the server side. If the official WordPress MCP Adapter
+plugin is installed, the same abilities are also registered on a private
+custom adapter server; the broad default adapter server is not used for these
+tools.
 
 ### Example JWT Payload
 
