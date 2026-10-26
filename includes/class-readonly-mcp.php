@@ -19,8 +19,11 @@ class AccessSSO_Readonly_MCP {
     const NONCE_TTL = 600;
     const MAX_BODY_BYTES = 65536;
     const NONCE_PREFIX = 'access_sso_mcp_nonce_';
+    const RESPONSE_HEADER = 'X-Access-SSO-MCP';
+    const SEARCH_EXCLUDED_POST_TYPES = array('attachment', 'revision', 'nav_menu_item', 'custom_css', 'customize_changeset', 'oembed_cache', 'user_request', 'wp_block', 'wp_template', 'wp_template_part', 'wp_global_styles', 'wp_navigation', 'wp_font_family', 'wp_font_face');
 
     private static $instance = null;
+    private static $request_authenticated = false;
 
     public static function get_instance() {
         if (null === self::$instance) {
@@ -50,13 +53,14 @@ class AccessSSO_Readonly_MCP {
 
     public function handle_request(WP_REST_Request $request) {
         $body = $request->get_body();
+        // Reject oversized bodies before spending an HMAC on them.
+        if (strlen($body) > self::MAX_BODY_BYTES) {
+            return $this->json_error('request_too_large', 'MCP request exceeds the maximum size.', array('status' => 413));
+        }
+
         $authorization = $this->authenticate_request($request, $body);
         if (is_wp_error($authorization)) {
             return $this->json_error($authorization->get_error_code(), $authorization->get_error_message(), $authorization->get_error_data());
-        }
-
-        if (strlen($body) > self::MAX_BODY_BYTES) {
-            return $this->json_error('request_too_large', 'MCP request exceeds the maximum size.', array('status' => 413));
         }
 
         $message = json_decode($body, true);
@@ -84,7 +88,7 @@ class AccessSSO_Readonly_MCP {
         }
 
         if ('notifications/initialized' === $method) {
-            return new WP_REST_Response(null, 202);
+            return $this->respond(null, 202);
         }
 
         if ('tools/list' === $method) {
@@ -151,12 +155,41 @@ class AccessSSO_Readonly_MCP {
         }
 
         $nonce_key = self::NONCE_PREFIX . hash('sha256', $nonce);
-        if (false !== get_transient($nonce_key)) {
+        if (!$this->claim_nonce($nonce_key)) {
             return new WP_Error('replayed_request', 'MCP request nonce has already been used.', array('status' => 401));
         }
 
+        self::$request_authenticated = true;
+        return true;
+    }
+
+    /**
+     * Record a nonce as used. Returns false when it was already used.
+     * A persistent object cache gives an atomic add; otherwise fall back to
+     * transients, whose small read-then-write window is bounded by the
+     * signature and the five-minute timestamp window.
+     */
+    private function claim_nonce($nonce_key) {
+        if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache() && function_exists('wp_cache_add')) {
+            return (bool) wp_cache_add($nonce_key, '1', 'access_sso_mcp', self::NONCE_TTL);
+        }
+
+        if (false !== get_transient($nonce_key)) {
+            return false;
+        }
         set_transient($nonce_key, '1', self::NONCE_TTL);
         return true;
+    }
+
+    /**
+     * Abilities may run only inside a request that passed the signed Access
+     * check, or for a site administrator. Never for anonymous callers.
+     */
+    public static function can_run_abilities() {
+        if (self::$request_authenticated) {
+            return true;
+        }
+        return function_exists('current_user_can') && current_user_can('manage_options');
     }
 
     private function get_tools() {
@@ -325,7 +358,7 @@ class AccessSSO_Readonly_MCP {
         }
 
         if (is_wp_error($value)) {
-            $input_error = in_array($value->get_error_code(), array('invalid_table'), true);
+            $input_error = in_array($value->get_error_code(), array('invalid_table', 'invalid_content_query'), true);
             return $this->json_rpc_error(
                 $id,
                 $input_error ? -32602 : -32000,
@@ -346,14 +379,64 @@ class AccessSSO_Readonly_MCP {
         }
 
         $registered_at = strtotime((string) $user->user_registered);
+        $memberships = $this->get_memberships_for_user((int) $user->ID);
+        $active = $this->get_active_product_ids((int) $user->ID, $memberships);
         return array(
             'id' => (int) $user->ID,
             'email' => strtolower((string) $user->user_email),
             'firstName' => (string) get_user_meta((int) $user->ID, 'first_name', true),
             'lastName' => (string) get_user_meta((int) $user->ID, 'last_name', true),
             'registeredAt' => $registered_at ? gmdate('c', $registered_at) : null,
-            'memberships' => $this->get_memberships_for_user((int) $user->ID),
+            'activeProductIds' => $active['productIds'],
+            'activeSource' => $active['source'],
+            'memberships' => $memberships,
         );
+    }
+
+    /**
+     * Product IDs the member can access right now. MemberPress's own check
+     * is authoritative when the plugin is loaded; otherwise derive it from
+     * the same transaction rules MemberPress uses.
+     */
+    private function get_active_product_ids($user_id, $memberships) {
+        if (class_exists('MeprUser')) {
+            $mepr_user = new MeprUser($user_id);
+            if (method_exists($mepr_user, 'active_product_subscriptions')) {
+                $ids = (array) $mepr_user->active_product_subscriptions('ids', true);
+                return array(
+                    'productIds' => array_values(array_unique(array_map('strval', $ids))),
+                    'source' => 'memberpress',
+                );
+            }
+        }
+
+        $ids = array();
+        foreach ($memberships as $membership) {
+            if (!empty($membership['active']) && '' !== $membership['productId']) {
+                $ids[] = $membership['productId'];
+            }
+        }
+        return array('productIds' => array_values(array_unique($ids)), 'source' => 'transactions');
+    }
+
+    /**
+     * MemberPress grants access from a complete or confirmed transaction
+     * whose expiry is empty (lifetime) or still in the future.
+     */
+    public static function is_transaction_active($row, $now) {
+        $status = isset($row['status']) ? (string) $row['status'] : '';
+        if (!in_array($status, array('complete', 'confirmed'), true)) {
+            return false;
+        }
+        if (self::is_lifetime_expiry(isset($row['expires_at']) ? $row['expires_at'] : null)) {
+            return true;
+        }
+        $expires = strtotime((string) $row['expires_at'] . ' UTC');
+        return false !== $expires && $expires > $now;
+    }
+
+    public static function is_lifetime_expiry($expires_at) {
+        return null === $expires_at || '' === (string) $expires_at || 0 === strpos((string) $expires_at, '0000-00-00');
     }
 
     private function get_memberships($email) {
@@ -504,7 +587,7 @@ class AccessSSO_Readonly_MCP {
         $per_page = isset($arguments['perPage']) ? max(1, min(100, (int) $arguments['perPage'])) : 50;
         $allowed_statuses = array('publish', 'draft', 'pending', 'private', 'any');
 
-        if (!post_type_exists($post_type) || !in_array($status, $allowed_statuses, true)) {
+        if (!in_array($post_type, self::searchable_post_types(), true) || !in_array($status, $allowed_statuses, true)) {
             return new WP_Error('invalid_content_query', 'The requested content type or status is not allowed.');
         }
 
@@ -545,6 +628,17 @@ class AccessSSO_Readonly_MCP {
             'count' => count($items),
             'items' => $items,
         );
+    }
+
+    /**
+     * Only public, front-end content types are searchable. Non-public types
+     * (orders, form entries, plugin settings stored as posts) can hold
+     * customer data or configuration, so they are never returned.
+     */
+    public static function searchable_post_types() {
+        $types = function_exists('get_post_types') ? get_post_types(array('public' => true), 'names') : array('post', 'page');
+        $types = array_values(array_diff(array_values((array) $types), self::SEARCH_EXCLUDED_POST_TYPES));
+        return function_exists('apply_filters') ? (array) apply_filters('access_sso_mcp_searchable_post_types', $types) : $types;
     }
 
     private function get_health() {
@@ -595,7 +689,7 @@ class AccessSSO_Readonly_MCP {
 
     private function get_logs($arguments) {
         $max_lines = isset($arguments['maxLines']) ? max(1, min(200, (int) $arguments['maxLines'])) : 100;
-        $path = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR . '/debug.log' : '';
+        $path = self::debug_log_path();
 
         if ('' === $path || !is_readable($path)) {
             return array('available' => false, 'reason' => 'The WordPress debug log is not available.', 'lines' => array());
@@ -612,7 +706,7 @@ class AccessSSO_Readonly_MCP {
 
         $lines = preg_split('/\r\n|\r|\n/', (string) $chunk);
         $lines = array_slice(array_filter($lines, 'strlen'), -$max_lines);
-        $lines = array_map(array($this, 'redact_log_line'), $lines);
+        $lines = array_map(array(__CLASS__, 'redact_log_line'), $lines);
 
         return array('available' => true, 'lineCount' => count($lines), 'lines' => $lines);
     }
@@ -669,11 +763,27 @@ class AccessSSO_Readonly_MCP {
         );
     }
 
-    private function redact_log_line($line) {
+    /**
+     * WordPress writes to wp-content/debug.log unless WP_DEBUG_LOG names a
+     * custom file path.
+     */
+    public static function debug_log_path() {
+        if (defined('WP_DEBUG_LOG') && is_string(WP_DEBUG_LOG) && !in_array(strtolower(WP_DEBUG_LOG), array('', '1', 'true', 'false', '0'), true)) {
+            return WP_DEBUG_LOG;
+        }
+        return defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR . '/debug.log' : '';
+    }
+
+    public static function redact_log_line($line) {
         $line = (string) $line;
         $line = preg_replace('/(Authorization\s*:\s*Bearer\s+)[^\s]+/i', '$1[REDACTED]', $line);
         $line = preg_replace('/((?:password|passwd|secret|token|api[_-]?key|access[_-]?key|signature)\s*[=:]\s*)[^\s,;]+/i', '$1[REDACTED]', $line);
         $line = preg_replace('/([?&](?:token|key|secret|password|signature)=)[^&\s]+/i', '$1[REDACTED]', $line);
+        // Stripe secret, restricted and webhook-signing keys appear bare in plugin logs.
+        $line = preg_replace('/\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]+/', '[REDACTED_STRIPE_KEY]', $line);
+        $line = preg_replace('/\bwhsec_[A-Za-z0-9]+/', '[REDACTED_STRIPE_KEY]', $line);
+        // Customer email addresses: keep the domain for debugging, hide the person.
+        $line = preg_replace('/\b[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/', '[email]@$1', $line);
         return preg_replace('/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/', '[REDACTED_JWT]', $line);
     }
 
@@ -686,41 +796,96 @@ class AccessSSO_Readonly_MCP {
     }
 
     private function find_user_by_email($email) {
-        global $wpdb;
-        $table = $wpdb->users;
-        $suppressed = $wpdb->suppress_errors(true);
-        $user = $wpdb->get_row($wpdb->prepare(
-            "SELECT ID, user_email, user_registered FROM {$table} WHERE LOWER(user_email) = LOWER(%s) LIMIT 1",
-            $email
-        ));
-        $wpdb->suppress_errors($suppressed);
-        return $user;
+        // get_user_by() uses the indexed user_email column; WordPress table
+        // collations compare case-insensitively, so no LOWER() scan is needed.
+        $user = get_user_by('email', $email);
+        if (!$user) {
+            return null;
+        }
+        return (object) array(
+            'ID' => (int) $user->ID,
+            'user_email' => (string) $user->user_email,
+            'user_registered' => (string) $user->user_registered,
+        );
     }
 
+    /**
+     * Recurring subscriptions plus one-time purchases. One-time and lifetime
+     * access exists only as a transaction (subscription_id = 0), so reading
+     * mepr_subscriptions alone would report lifetime members as non-members.
+     */
     private function get_memberships_for_user($user_id) {
         global $wpdb;
-        $table = $wpdb->prefix . 'mepr_subscriptions';
         $suppressed = $wpdb->suppress_errors(true);
-        $rows = $wpdb->get_results($wpdb->prepare(
-            "SELECT id, product_id, status, created_at, expires_at FROM {$table} WHERE user_id = %d ORDER BY id DESC LIMIT %d",
+        $subscriptions = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, product_id, status, created_at FROM {$wpdb->prefix}mepr_subscriptions WHERE user_id = %d ORDER BY id DESC LIMIT %d",
             (int) $user_id,
             100
         ), ARRAY_A);
+        $transactions = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, product_id, subscription_id, status, created_at, expires_at FROM {$wpdb->prefix}mepr_transactions WHERE user_id = %d ORDER BY id DESC LIMIT %d",
+            (int) $user_id,
+            300
+        ), ARRAY_A);
         $wpdb->suppress_errors($suppressed);
 
-        if (!is_array($rows)) {
-            return array();
+        return self::build_memberships(
+            is_array($subscriptions) ? $subscriptions : array(),
+            is_array($transactions) ? $transactions : array(),
+            time()
+        );
+    }
+
+    public static function build_memberships($subscriptions, $transactions, $now) {
+        $by_subscription = array();
+        $memberships = array();
+
+        foreach ($transactions as $txn) {
+            $subscription_id = isset($txn['subscription_id']) ? (int) $txn['subscription_id'] : 0;
+            if ($subscription_id > 0) {
+                $by_subscription[$subscription_id][] = $txn;
+                continue;
+            }
+            if (!in_array(isset($txn['status']) ? $txn['status'] : '', array('complete', 'confirmed', 'refunded'), true)) {
+                continue;
+            }
+            $expires_at = isset($txn['expires_at']) ? $txn['expires_at'] : null;
+            $memberships[] = array(
+                'id' => 'txn-' . (isset($txn['id']) ? (string) $txn['id'] : ''),
+                'source' => 'one_time',
+                'productId' => isset($txn['product_id']) ? (string) $txn['product_id'] : '',
+                'status' => (string) $txn['status'],
+                'active' => self::is_transaction_active($txn, $now),
+                'lifetime' => self::is_lifetime_expiry($expires_at),
+                'createdAt' => isset($txn['created_at']) ? (string) $txn['created_at'] : null,
+                'expiresAt' => self::is_lifetime_expiry($expires_at) ? null : (string) $expires_at,
+            );
         }
 
-        return array_map(function ($row) {
-            return array(
-                'id' => isset($row['id']) ? (string) $row['id'] : '',
+        $recurring = array();
+        foreach ($subscriptions as $row) {
+            $id = isset($row['id']) ? (int) $row['id'] : 0;
+            $active = false;
+            $latest_expiry = null;
+            foreach (isset($by_subscription[$id]) ? $by_subscription[$id] : array() as $txn) {
+                $active = $active || self::is_transaction_active($txn, $now);
+                if (!self::is_lifetime_expiry(isset($txn['expires_at']) ? $txn['expires_at'] : null) && (null === $latest_expiry || $txn['expires_at'] > $latest_expiry)) {
+                    $latest_expiry = (string) $txn['expires_at'];
+                }
+            }
+            $recurring[] = array(
+                'id' => (string) $id,
+                'source' => 'subscription',
                 'productId' => isset($row['product_id']) ? (string) $row['product_id'] : '',
                 'status' => isset($row['status']) ? (string) $row['status'] : 'unknown',
+                'active' => $active,
+                'lifetime' => false,
                 'createdAt' => isset($row['created_at']) ? (string) $row['created_at'] : null,
-                'expiresAt' => isset($row['expires_at']) ? (string) $row['expires_at'] : null,
+                'expiresAt' => $latest_expiry,
             );
-        }, $rows);
+        }
+
+        return array_slice(array_merge($recurring, $memberships), 0, 100);
     }
 
     private function sanitize_transaction($row) {
@@ -845,7 +1010,7 @@ class AccessSSO_Readonly_MCP {
                 continue;
             }
             $config['category'] = 'site';
-            $config['permission_callback'] = function () { return true; };
+            $config['permission_callback'] = array(__CLASS__, 'can_run_abilities');
             $config['meta'] = array(
                 'mcp' => array(
                     'public' => false,
@@ -907,12 +1072,23 @@ class AccessSSO_Readonly_MCP {
         );
     }
 
+    /**
+     * Every endpoint response carries a marker header so Access can tell
+     * "this plugin answered" apart from a site that lacks the endpoint.
+     */
+    private function respond($data, $status) {
+        $response = new WP_REST_Response($data, (int) $status);
+        $response->header(self::RESPONSE_HEADER, '1');
+        $response->header('Cache-Control', 'no-store');
+        return $response;
+    }
+
     private function json_result($id, $result) {
-        return new WP_REST_Response(array('jsonrpc' => '2.0', 'id' => $id, 'result' => $result), 200);
+        return $this->respond(array('jsonrpc' => '2.0', 'id' => $id, 'result' => $result), 200);
     }
 
     private function json_rpc_error($id, $code, $message, $status = 200) {
-        return new WP_REST_Response(array(
+        return $this->respond(array(
             'jsonrpc' => '2.0',
             'id' => $id,
             'error' => array('code' => (int) $code, 'message' => (string) $message),
@@ -921,6 +1097,6 @@ class AccessSSO_Readonly_MCP {
 
     private function json_error($code, $message, $data = array()) {
         $status = isset($data['status']) ? (int) $data['status'] : 400;
-        return new WP_REST_Response(array('code' => $code, 'message' => $message), $status);
+        return $this->respond(array('code' => $code, 'message' => $message), $status);
     }
 }

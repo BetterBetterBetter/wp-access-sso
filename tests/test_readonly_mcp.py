@@ -11,7 +11,7 @@ class ReadonlyMcpTests(unittest.TestCase):
     def test_plugin_loads_private_mcp_bridge(self):
         self.assertIn("class-readonly-mcp.php", MAIN)
         self.assertIn("AccessSSO_Readonly_MCP::get_instance();", MAIN)
-        self.assertIn("Version: 1.4.0", MAIN)
+        self.assertIn("Version: 1.4.1", MAIN)
 
     def test_endpoint_is_signed_site_bound_and_replay_protected(self):
         self.assertIn("register_rest_route(self::ROUTE_NAMESPACE, self::ROUTE", MCP)
@@ -72,6 +72,26 @@ class ReadonlyMcpTests(unittest.TestCase):
         self.assertIn("'access-sso/get-inventory'", MCP)
         self.assertIn("'access-sso/get-database-schema'", MCP)
         self.assertIn("'public' => false", MCP)
+
+    def test_abilities_never_run_for_anonymous_callers(self):
+        self.assertNotIn("'permission_callback'] = function () { return true; }", MCP)
+        self.assertIn("array(__CLASS__, 'can_run_abilities')", MCP)
+        self.assertIn("current_user_can('manage_options')", MCP)
+
+    def test_memberships_include_one_time_and_lifetime_access(self):
+        # mepr_subscriptions has no expires_at column; selecting it made the
+        # query fail silently and return no memberships for anyone.
+        self.assertNotIn("SELECT id, product_id, status, created_at, expires_at FROM {$wpdb->prefix}mepr_subscriptions", MCP)
+        self.assertIn("mepr_transactions WHERE user_id = %d", MCP)
+        self.assertIn("active_product_subscriptions('ids', true)", MCP)
+
+    def test_content_search_is_limited_to_public_types(self):
+        self.assertIn("get_post_types(array('public' => true)", MCP)
+        self.assertNotIn("!post_type_exists($post_type)", MCP)
+
+    def test_responses_carry_plugin_marker_and_size_check_precedes_auth(self):
+        self.assertIn("X-Access-SSO-MCP", MCP)
+        self.assertLess(MCP.index("MAX_BODY_BYTES) {"), MCP.index("$authorization = $this->authenticate_request($request, $body);"))
 
 
 if __name__ == "__main__":

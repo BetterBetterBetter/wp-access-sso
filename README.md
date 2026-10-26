@@ -215,7 +215,21 @@ The endpoint exposes only these read tools:
 - `access_sso_get_logs`
 - `access_sso_get_database_schema`
 
-Content, logs, and database results are bounded. Log secrets are redacted,
+Membership tools report recurring subscriptions and one-time purchases
+(including lifetime access, which exists only as a MemberPress transaction).
+`access_sso_get_member` adds `activeProductIds` from MemberPress's own active
+check when MemberPress is loaded (`activeSource: "memberpress"`), otherwise from
+the same transaction rules (`activeSource: "transactions"`).
+
+Content search covers public post types only (filter:
+`access_sso_mcp_searchable_post_types`); non-public types such as orders, form
+entries and settings stored as posts are refused. Every endpoint response
+carries an `X-Access-SSO-MCP: 1` header so Access can tell a plugin error apart
+from a site without the endpoint. The registered abilities run only inside a
+signed request or for a site administrator.
+
+Content, logs, and database results are bounded. Log secrets (including bare
+Stripe `sk_`/`rk_`/`whsec_` keys) are redacted and email addresses are masked,
 database access is limited to table and column metadata, and the endpoint does
 not expose arbitrary REST, SQL, MemberPress writes, credentials, or provider
 keys. Access remains the public agent-facing MCP gateway and calls this
@@ -326,6 +340,15 @@ For support and bug reports, please contact your Access Platform administrator o
 This plugin is licensed under GPL v2 or later.
 
 ## Changelog
+
+### Version 1.4.1
+- Fixed the MCP membership tools returning no memberships for anyone: the subscriptions query selected a column MemberPress does not have and the error was suppressed. Memberships now include one-time and lifetime purchases, and members report the product IDs they can access right now.
+- Content search is limited to public post types; logs also redact Stripe keys and mask email addresses and honor a custom `WP_DEBUG_LOG` path.
+- MCP abilities no longer allow every caller; they require a signed Access request or a site administrator.
+- Oversized requests are refused before signature checks; replay protection uses an atomic cache add when a persistent object cache is present; member lookup uses the indexed email column.
+
+### Version 1.4.0
+- Private, signed, read-only MCP endpoint for the Access platform (`/wp-json/access-sso/v1/mcp`) with member, product, site, health, log and schema tools.
 
 ### Version 1.2.4
 - Fixed the account-page banner showing for legacy MemberPress-billed members. The gate now checks who bills the member's MemberPress subscriptions (Access: gateway `manual` with a `sub_` subscr_id) instead of the `access_platform_id` meta, which every SSO login sets. Access-billed members who log in with a WordPress password now see the banner too.
