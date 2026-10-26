@@ -3,7 +3,7 @@
  * Plugin Name: Access Platform SSO
  * Plugin URI: https://github.com/BetterBetterBetter/wp-access-sso
  * Description: Single Sign-On integration with Access Platform (Supabase Auth)
- * Version: 1.2.5
+ * Version: 1.4.1
  * Author: Access Platform Team
  * License: GPL v2 or later
  * Text Domain: access-platform-sso
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ACCESS_SSO_VERSION', '1.2.5');
+define('ACCESS_SSO_VERSION', '1.4.1');
 define('ACCESS_SSO_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ACCESS_SSO_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -25,6 +25,7 @@ require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-user-provisioner.php';
 require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-session-manager.php';
 require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-admin-settings.php';
 require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-billing-owner.php';
+require_once ACCESS_SSO_PLUGIN_DIR . 'includes/class-readonly-mcp.php';
 
 // Plugin Update Checker - GitHub integration
 if (file_exists(ACCESS_SSO_PLUGIN_DIR . 'plugin-update-checker/plugin-update-checker.php')) {
@@ -1550,6 +1551,7 @@ function access_sso_notify_access_admins($result, $context = array()) {
 
 // Initialize the plugin
 AccessPlatformSSO::get_instance();
+AccessSSO_Readonly_MCP::get_instance();
 
 // Activation and deactivation hooks
 register_activation_hook(__FILE__, array('AccessPlatformSSO', 'activate'));

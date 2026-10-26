@@ -11,6 +11,7 @@ A comprehensive Single Sign-On (SSO) plugin that integrates WordPress sites with
 - **Security Features**: Browser-bound login state, single-use short-lived JWTs, rate limiting, and redacted diagnostics
 - **Professional Admin Interface**: Easy-to-use configuration and monitoring dashboard
 - **Login Form Detection**: Automatically detects and enhances login forms from MemberPress, LearnDash, WooCommerce, and more
+- **Private Read-only MCP**: Allows the Access platform to read bounded site data without exposing WordPress credentials or write-capable tools
 
 ## Installation
 
@@ -190,6 +191,52 @@ This plugin works with your existing Access Platform JWT endpoint at `/api/sso/j
 3. Sign tokens with the shared JWT secret
 4. Handle token validation requests
 
+## Private read-only MCP
+
+When the canonical site ID has been verified, the plugin exposes a private
+MCP-compatible endpoint at `/wp-json/access-sso/v1/mcp`. It accepts only
+server-to-server requests signed with the existing site-bound SSO secret using
+the `X-Access-Site-Id`, `X-Access-MCP-Timestamp`, `X-Access-MCP-Nonce`, and
+`X-Access-MCP-Signature` headers. Requests are timestamp-bounded and nonce
+replay protected.
+
+The endpoint exposes only these read tools:
+
+- `access_sso_get_member`
+- `access_sso_get_memberships`
+- `access_sso_get_transactions`
+- `access_sso_list_products`
+- `access_sso_get_site`
+- `access_sso_get_inventory`
+- `access_sso_list_plugins`
+- `access_sso_list_themes`
+- `access_sso_search_content`
+- `access_sso_get_health`
+- `access_sso_get_logs`
+- `access_sso_get_database_schema`
+
+Membership tools report recurring subscriptions and one-time purchases
+(including lifetime access, which exists only as a MemberPress transaction).
+`access_sso_get_member` adds `activeProductIds` from MemberPress's own active
+check when MemberPress is loaded (`activeSource: "memberpress"`), otherwise from
+the same transaction rules (`activeSource: "transactions"`).
+
+Content search covers public post types only (filter:
+`access_sso_mcp_searchable_post_types`); non-public types such as orders, form
+entries and settings stored as posts are refused. Every endpoint response
+carries an `X-Access-SSO-MCP: 1` header so Access can tell a plugin error apart
+from a site without the endpoint. The registered abilities run only inside a
+signed request or for a site administrator.
+
+Content, logs, and database results are bounded. Log secrets (including bare
+Stripe `sk_`/`rk_`/`whsec_` keys) are redacted and email addresses are masked,
+database access is limited to table and column metadata, and the endpoint does
+not expose arbitrary REST, SQL, MemberPress writes, credentials, or provider
+keys. Access remains the public agent-facing MCP gateway and calls this
+endpoint from the server side. If the official WordPress MCP Adapter plugin
+is installed, the same abilities are also registered on a private custom
+adapter server; the broad default adapter server is not used for these tools.
+
 ### Example JWT Payload
 
 ```json
@@ -293,6 +340,15 @@ For support and bug reports, please contact your Access Platform administrator o
 This plugin is licensed under GPL v2 or later.
 
 ## Changelog
+
+### Version 1.4.1
+- Fixed the MCP membership tools returning no memberships for anyone: the subscriptions query selected a column MemberPress does not have and the error was suppressed. Memberships now include one-time and lifetime purchases, and members report the product IDs they can access right now.
+- Content search is limited to public post types; logs also redact Stripe keys and mask email addresses and honor a custom `WP_DEBUG_LOG` path.
+- MCP abilities no longer allow every caller; they require a signed Access request or a site administrator.
+- Oversized requests are refused before signature checks; replay protection uses an atomic cache add when a persistent object cache is present; member lookup uses the indexed email column.
+
+### Version 1.4.0
+- Private, signed, read-only MCP endpoint for the Access platform (`/wp-json/access-sso/v1/mcp`) with member, product, site, health, log and schema tools.
 
 ### Version 1.2.4
 - Fixed the account-page banner showing for legacy MemberPress-billed members. The gate now checks who bills the member's MemberPress subscriptions (Access: gateway `manual` with a `sub_` subscr_id) instead of the `access_platform_id` meta, which every SSO login sets. Access-billed members who log in with a WordPress password now see the banner too.
